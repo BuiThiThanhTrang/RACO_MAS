@@ -1,0 +1,12 @@
+{
+  "task": "gsm-hard",
+  "input_files": [
+    "D:\\SideProject\\ChatDev\\puppeteer\\results\\gsm-hard_test_initialized\\gsm-hard_day1_start0_limit3.jsonl",
+    "D:\\SideProject\\ChatDev\\puppeteer\\results\\gsm-hard_test_initialized\\gsm-hard_day2_start1_limit3.jsonl"
+  ],
+  "total": 4,
+  "correct": 3,
+  "accuracy": 0.75,
+  "duplicate_ids_overwritten": [],
+  "output": ".\\puppeteer\\results\\gsm-hard_test_initialized\\gsm-hard_merged.jsonl"
+}

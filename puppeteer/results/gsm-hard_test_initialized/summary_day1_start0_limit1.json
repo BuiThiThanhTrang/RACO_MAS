@@ -1,0 +1,11 @@
+{
+  "task": "gsm-hard",
+  "mode": "test",
+  "total": 1,
+  "correct": 0,
+  "accuracy": 0.0,
+  "data_start": 0,
+  "data_limit": 1,
+  "seed": 42,
+  "result_path": "D:\\SideProject\\ChatDev\\puppeteer\\results\\gsm-hard_test_initialized\\gsm-hard_day1_start0_limit1.jsonl"
+}

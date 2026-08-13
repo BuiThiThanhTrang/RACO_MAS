@@ -1,0 +1,63 @@
+{
+  "workflow_id": "session_389142c9-9503-4110-ba86-9a2c8cf78c76",
+  "total_usage": {
+    "input_tokens": 94,
+    "output_tokens": 2895,
+    "total_tokens": 2989
+  },
+  "node_usages": {
+    "poet": {
+      "input_tokens": 42,
+      "output_tokens": 93,
+      "total_tokens": 135
+    },
+    "article writer": {
+      "input_tokens": 52,
+      "output_tokens": 2802,
+      "total_tokens": 2854
+    }
+  },
+  "model_usages": {
+    "gemini-3.1-flash-lite": {
+      "input_tokens": 94,
+      "output_tokens": 2895,
+      "total_tokens": 2989
+    }
+  },
+  "node_execution_counts": {
+    "poet": 1,
+    "article writer": 1
+  },
+  "call_history": [
+    {
+      "node_id": "poet",
+      "model_name": "gemini-3.1-flash-lite",
+      "input_tokens": 42,
+      "output_tokens": 93,
+      "total_tokens": 135,
+      "metadata": {
+        "prompt_token_count": 42,
+        "candidates_token_count": 93,
+        "total_token_count": 135
+      },
+      "timestamp": "2026-06-27T14:09:21.837901",
+      "execution_number": 1,
+      "provider": "gemini"
+    },
+    {
+      "node_id": "article writer",
+      "model_name": "gemini-3.1-flash-lite",
+      "input_tokens": 52,
+      "output_tokens": 2802,
+      "total_tokens": 2854,
+      "metadata": {
+        "prompt_token_count": 52,
+        "candidates_token_count": 2802,
+        "total_token_count": 2854
+      },
+      "timestamp": "2026-06-27T14:09:25.458714",
+      "execution_number": 1,
+      "provider": "gemini"
+    }
+  ]
+}

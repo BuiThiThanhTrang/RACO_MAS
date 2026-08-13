@@ -1,0 +1,18 @@
+{
+  "task": "gsm-hard",
+  "logs_root": "puppeteer\\logs\\GSM-Hard",
+  "total_folders": 5,
+  "parsed_runs": 4,
+  "correct": 3,
+  "accuracy": 0.75,
+  "unparsed_folders": [
+    {
+      "run_id": "2026-07-16-14-19-43",
+      "folder": "puppeteer\\logs\\GSM-Hard\\2026-07-16-14-19-43",
+      "parse_errors": [
+        "missing_final_answer"
+      ]
+    }
+  ],
+  "output": "puppeteer\\results\\gsm-hard_logs_accuracy.jsonl"
+}

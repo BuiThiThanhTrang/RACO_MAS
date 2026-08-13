@@ -1,0 +1,84 @@
+{
+  "workflow_id": "session_fe8949df-5acc-4e26-82a3-2547e68a8453",
+  "total_usage": {
+    "input_tokens": 2449,
+    "output_tokens": 4657,
+    "total_tokens": 7106
+  },
+  "node_usages": {
+    "poet": {
+      "input_tokens": 42,
+      "output_tokens": 80,
+      "total_tokens": 122
+    },
+    "article writer": {
+      "input_tokens": 52,
+      "output_tokens": 2249,
+      "total_tokens": 2301
+    },
+    "editor": {
+      "input_tokens": 2355,
+      "output_tokens": 2328,
+      "total_tokens": 4683
+    }
+  },
+  "model_usages": {
+    "gemini-3.1-flash-lite": {
+      "input_tokens": 2449,
+      "output_tokens": 4657,
+      "total_tokens": 7106
+    }
+  },
+  "node_execution_counts": {
+    "poet": 1,
+    "article writer": 1,
+    "editor": 1
+  },
+  "call_history": [
+    {
+      "node_id": "poet",
+      "model_name": "gemini-3.1-flash-lite",
+      "input_tokens": 42,
+      "output_tokens": 80,
+      "total_tokens": 122,
+      "metadata": {
+        "prompt_token_count": 42,
+        "candidates_token_count": 80,
+        "total_token_count": 122
+      },
+      "timestamp": "2026-06-27T14:11:18.846109",
+      "execution_number": 1,
+      "provider": "gemini"
+    },
+    {
+      "node_id": "article writer",
+      "model_name": "gemini-3.1-flash-lite",
+      "input_tokens": 52,
+      "output_tokens": 2249,
+      "total_tokens": 2301,
+      "metadata": {
+        "prompt_token_count": 52,
+        "candidates_token_count": 2249,
+        "total_token_count": 2301
+      },
+      "timestamp": "2026-06-27T14:11:47.071153",
+      "execution_number": 1,
+      "provider": "gemini"
+    },
+    {
+      "node_id": "editor",
+      "model_name": "gemini-3.1-flash-lite",
+      "input_tokens": 2355,
+      "output_tokens": 2328,
+      "total_tokens": 4683,
+      "metadata": {
+        "prompt_token_count": 2355,
+        "candidates_token_count": 2328,
+        "total_token_count": 4683
+      },
+      "timestamp": "2026-06-27T14:12:02.243183",
+      "execution_number": 1,
+      "provider": "gemini"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+node_poet:
+  node_id: poet
+  node_type: agent
+  predecessors_num: 0
+  successors_num: 1
+  results:
+  - type: message
+    payload:
+      role: assistant
+      content: 'Error calling model gpt-5.4-mini: Error code: 429 - {''error'': {''message'':
+        ''You exceeded your current quota, please check your plan and billing details.
+        For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.'',
+        ''type'': ''insufficient_quota'', ''param'': None, ''code'': ''insufficient_quota''}}
+
+
+        Original input: === INPUT FROM TASK (user) ===
+
+
+        good...'
+      metadata:
+        source: poet
+node_editor:
+  node_id: editor
+  node_type: agent
+  predecessors_num: 2
+  successors_num: 0
+  results:
+  - type: message
+    payload:
+      role: assistant
+      content: 'Error calling model gpt-5.4-mini: Error code: 429 - {''error'': {''message'':
+        ''You exceeded your current quota, please check your plan and billing details.
+        For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.'',
+        ''type'': ''insufficient_quota'', ''param'': None, ''code'': ''insufficient_quota''}}
+
+
+        Original input: === INPUT FROM article writer (user) ===
+
+
+        Error calling model o3: Error code: 429 - {''error'': {''message'': ''You
+        exceeded your current quota, please check your plan and billing details. For
+        more informa...'
+      metadata:
+        source: editor
+node_article writer:
+  node_id: article writer
+  node_type: agent
+  predecessors_num: 0
+  successors_num: 1
+  results:
+  - type: message
+    payload:
+      role: assistant
+      content: 'Error calling model o3: Error code: 429 - {''error'': {''message'':
+        ''You exceeded your current quota, please check your plan and billing details.
+        For more information on this error, read the docs: https://platform.openai.com/docs/guides/error-codes/api-errors.'',
+        ''type'': ''insufficient_quota'', ''param'': None, ''code'': ''insufficient_quota''}}
+
+
+        Original input: === INPUT FROM TASK (user) ===
+
+
+        good...'
+      metadata:
+        source: article writer
+graph_summary:
+  total_nodes: 3
+  total_edges: 2
+  total_transmissions: 0
+  layers: 2
+  execution_completed: true
+  is_majority_voting: false

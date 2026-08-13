@@ -1,0 +1,3 @@
+{"id": 0, "original_index": 677, "batch_index": 0, "data_start": 0, "seed": 42, "pred": "1227498.3333333333", "answer": 1227498.3333333333, "correct": true}
+{"id": 1, "original_index": 1046, "batch_index": 1, "data_start": 0, "seed": 42, "pred": "3473609.0", "answer": 3473609.0, "correct": true}
+{"id": 2, "original_index": 610, "batch_index": 2, "data_start": 0, "seed": 42, "pred": "12.0", "answer": -2.9999834061, "correct": false}

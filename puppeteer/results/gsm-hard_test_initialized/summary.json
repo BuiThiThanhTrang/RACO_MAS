@@ -1,0 +1,8 @@
+{
+  "task": "gsm-hard",
+  "mode": "test",
+  "total": 1,
+  "correct": 1,
+  "accuracy": 1.0,
+  "result_path": "D:\\SideProject\\ChatDev\\puppeteer\\results\\gsm-hard_test_initialized\\gsm-hard.jsonl"
+}

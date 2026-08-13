@@ -1,0 +1,76 @@
+logging:
+  level: INFO  # logging level, e.g., INFO
+  logpath: ./logs  # the path to the folder for storing log files
+
+# Puppeteer state representation has exactly two supported modes:
+# 1. api_embedding: call the configured embedding API.
+# 2. local_reward_model: load the 70B reward model on the local machine.
+#
+# For local_reward_model, uncomment model_weight_path and set
+# state_representation.type to local_reward_model.
+# model_weight_path: nvidia/Llama-3.1-Nemotron-70B-Reward-HF
+reward_model:
+  torch_dtype: auto   # auto uses fp16 on V100, bf16 on A100/H100, fp32 on CPU
+  device_map: auto
+  quantization: none  # options: none, 8bit, 4bit; 8bit/4bit require bitsandbytes
+  max_length: 4096
+  max_chars: 12000
+
+# API mode keeps the policy state task-dependent without requiring a large local GPU.
+state_representation:
+  type: api_embedding
+  provider: gemini
+  provider_profile: gemini_openai
+  model: models/gemini-embedding-2
+  dim: 3072
+  max_chars: 12000
+  max_retry_times: 3
+  reward: 0.0
+  cache:
+    enabled: True
+    path: cache/embeddings
+
+api_providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+  gemini_openai:
+    api_key_env: GEMINI_API_KEY
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+  huggingface_router:
+    api_key_env: HF_TOKEN
+    base_url: https://router.huggingface.co/v1
+  featherless_ai:
+    api_key_env: FEATHERLESS_API_KEY
+    base_url: https://api.featherless.ai/v1
+  novita:
+    api_key_env: NOVITA_API_KEY
+    base_url: https://api.novita.ai/openai
+  openrouter:
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    headers:
+      HTTP-Referer: $OPENROUTER_SITE_URL
+      X-Title: $OPENROUTER_APP_NAME
+  local_vllm:
+    api_key: none
+    base_url: http://localhost:8000/v1
+
+api_keys:
+  # Using Gemini via OpenAI-compatible endpoint
+  openai_api_key: "GEMINI_API_KEY"
+  openai_base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  bing_api_key: ""  # bing api key for web search (optional)
+
+max_retry_times: 3  # maximum number of times to retry API calls
+retry_wait_min: 1  # minimum seconds between chat API retries
+retry_wait_max: 3  # maximum seconds between chat API retries
+max_json_reformat_turns: 3  # maximum number of times to retry JSON parsing/reformatting
+external_tools_enabled: True  # whether to enable external tools like web search, file search, etc.
+
+file_path:
+  root_file_path: ./data  # the path to the folder containing all the files which agents might need
+
+graph:
+  max_parallel_paths: 3  # maximum number of parallel paths to explore in the graph
+  max_step_num: 5  # maximum number of steps (nodes) in each path

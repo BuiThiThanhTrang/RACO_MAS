@@ -1,0 +1,59 @@
+project: session_b4e9e71c-7648-4bf0-af48-c0a7dc2b9104
+organization: DefaultOrg
+design_path: yaml_instance\1.yaml
+metadata:
+  design_id: '1'
+  node_count: 3
+  edge_count: 2
+  start:
+  - poet
+  - article writer
+  end: []
+  catalog:
+    editor:
+      type: agent
+      description: null
+      model_name: gpt-5.4-mini
+      role: 'You are an editor. Combine the article and the poem, and append the poem
+        at the end of the article.
+
+        '
+      tools: []
+      memories: []
+      params: {}
+    article writer:
+      type: agent
+      description: null
+      model_name: gemini-3.1-flash-lite
+      role: 'You are a writer who excels at generating a full article from a single
+        word or short phrase.
+
+        The user will input a word or short phrase, and you must produce an article
+        of at least 2000 words with multiple paragraphs.
+
+        '
+      tools: []
+      memories: []
+      params: {}
+    poet:
+      type: agent
+      description: null
+      model_name: gemini-3.1-flash-lite
+      role: 'You are a poet who crafts a modern English poem based on a single word
+        or short phrase.
+
+        The user will input a word or short phrase. Write a modern English poem inspired
+        by it.
+
+        '
+      tools: []
+      memories: []
+      params: {}
+  topology:
+  - article writer
+  - poet
+  - editor
+  layers:
+  - - article writer
+    - poet
+  - - editor

@@ -1,0 +1,89 @@
+{
+  "workflow_id": "session_29930145-57d1-42d3-8fe9-6093abb41666",
+  "total_usage": {
+    "input_tokens": 5014,
+    "output_tokens": 7581,
+    "total_tokens": 14324
+  },
+  "node_usages": {
+    "poet": {
+      "input_tokens": 42,
+      "output_tokens": 67,
+      "total_tokens": 109
+    },
+    "article writer": {
+      "input_tokens": 52,
+      "output_tokens": 4827,
+      "total_tokens": 6608
+    },
+    "editor": {
+      "input_tokens": 4920,
+      "output_tokens": 2687,
+      "total_tokens": 7607
+    }
+  },
+  "model_usages": {
+    "gemini-3.1-flash-lite": {
+      "input_tokens": 4962,
+      "output_tokens": 2754,
+      "total_tokens": 7716
+    },
+    "gemini-3.5-flash": {
+      "input_tokens": 52,
+      "output_tokens": 4827,
+      "total_tokens": 6608
+    }
+  },
+  "node_execution_counts": {
+    "poet": 1,
+    "article writer": 1,
+    "editor": 1
+  },
+  "call_history": [
+    {
+      "node_id": "poet",
+      "model_name": "gemini-3.1-flash-lite",
+      "input_tokens": 42,
+      "output_tokens": 67,
+      "total_tokens": 109,
+      "metadata": {
+        "prompt_token_count": 42,
+        "candidates_token_count": 67,
+        "total_token_count": 109
+      },
+      "timestamp": "2026-06-27T15:01:26.242840",
+      "execution_number": 1,
+      "provider": "gemini"
+    },
+    {
+      "node_id": "article writer",
+      "model_name": "gemini-3.5-flash",
+      "input_tokens": 52,
+      "output_tokens": 4827,
+      "total_tokens": 6608,
+      "metadata": {
+        "prompt_token_count": 52,
+        "candidates_token_count": 4827,
+        "total_token_count": 6608
+      },
+      "timestamp": "2026-06-27T15:02:04.262981",
+      "execution_number": 1,
+      "provider": "gemini"
+    },
+    {
+      "node_id": "editor",
+      "model_name": "gemini-3.1-flash-lite",
+      "input_tokens": 4920,
+      "output_tokens": 2687,
+      "total_tokens": 7607,
+      "metadata": {
+        "prompt_token_count": 4920,
+        "candidates_token_count": 2687,
+        "total_token_count": 7607
+      },
+      "timestamp": "2026-06-27T15:02:13.405767",
+      "execution_number": 1,
+      "provider": "gemini"
+    }
+  ]
+}

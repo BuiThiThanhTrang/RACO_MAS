@@ -1,0 +1,83 @@
+node_Product Manager:
+  node_id: Product Manager
+  node_type: agent
+  predecessors_num: 0
+  successors_num: 1
+  results:
+  - type: message
+    payload:
+      role: assistant
+      content: 'Error calling model gemini-3-pro-preview: 400 INVALID_ARGUMENT. {''error'':
+        {''code'': 400, ''message'': ''API key not valid. Please pass a valid API
+        key.'', ''status'': ''INVALID_ARGUMENT'', ''details'': [{''@type'': ''type.googleapis.com/google.rpc.ErrorInfo'',
+        ''reason'': ''API_KEY_INVALID'', ''domain'': ''googleapis.com'', ''metadata'':
+        {''service'': ''generativelanguage.googleapis.com''}}, {''@type'': ''type.googleapis.com/google.rpc.LocalizedMessage'',
+        ''locale'': ''en-US'', ''message'': ''API key not valid. Please pass a valid
+        API key.''}]}}
+
+
+        Original input: === INPUT FROM TASK (user) ===
+
+
+        what can you do...'
+      metadata:
+        source: Product Manager
+node_Planner:
+  node_id: Planner
+  node_type: agent
+  predecessors_num: 1
+  successors_num: 1
+  results:
+  - type: message
+    payload:
+      role: assistant
+      content: 'Error calling model gemini-3-pro-preview: 400 INVALID_ARGUMENT. {''error'':
+        {''code'': 400, ''message'': ''API key not valid. Please pass a valid API
+        key.'', ''status'': ''INVALID_ARGUMENT'', ''details'': [{''@type'': ''type.googleapis.com/google.rpc.ErrorInfo'',
+        ''reason'': ''API_KEY_INVALID'', ''domain'': ''googleapis.com'', ''metadata'':
+        {''service'': ''generativelanguage.googleapis.com''}}, {''@type'': ''type.googleapis.com/google.rpc.LocalizedMessage'',
+        ''locale'': ''en-US'', ''message'': ''API key not valid. Please pass a valid
+        API key.''}]}}
+
+
+        Original input: === INPUT FROM Product Manager (user) ===
+
+
+        Error calling model gemini-3-pro-preview: 400 INVALID_ARGUMENT. {''error'':
+        {''code'': 400, ''message'': ''API key not valid. Please pass a valid API
+        key.'', ''status...'
+      metadata:
+        source: Planner
+node_Orchestrator:
+  node_id: Orchestrator
+  node_type: agent
+  predecessors_num: 5
+  successors_num: 4
+  results:
+  - type: message
+    payload:
+      role: assistant
+      content: 'Error calling model gemini-3-pro-preview: 400 INVALID_ARGUMENT. {''error'':
+        {''code'': 400, ''message'': ''API key not valid. Please pass a valid API
+        key.'', ''status'': ''INVALID_ARGUMENT'', ''details'': [{''@type'': ''type.googleapis.com/google.rpc.ErrorInfo'',
+        ''reason'': ''API_KEY_INVALID'', ''domain'': ''googleapis.com'', ''metadata'':
+        {''service'': ''generativelanguage.googleapis.com''}}, {''@type'': ''type.googleapis.com/google.rpc.LocalizedMessage'',
+        ''locale'': ''en-US'', ''message'': ''API key not valid. Please pass a valid
+        API key.''}]}}
+
+
+        Original input: === INPUT FROM Planner (user) ===
+
+
+        Error calling model gemini-3-pro-preview: 400 INVALID_ARGUMENT. {''error'':
+        {''code'': 400, ''message'': ''API key not valid. Please pass a valid API
+        key.'', ''status'': ''INVA...'
+      metadata:
+        source: Orchestrator
+graph_summary:
+  total_nodes: 7
+  total_edges: 10
+  total_transmissions: 0
+  layers: 1
+  execution_completed: true
+  is_majority_voting: false

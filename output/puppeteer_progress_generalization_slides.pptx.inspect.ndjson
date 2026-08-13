@@ -1,0 +1,194 @@
+{"kind":"deck","id":"pr/6m5h0t","name":"Deck"}
+{"kind":"layout","layoutId":"5ea0b7a9-4b31-4d32-8201-686814d132e0","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"9a866b22-4594-408e-ba13-0564e58ba3ca","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/3mj754","slide":1,"title":"Báo cáo tiến độ","textShapes":3}
+{"kind":"textbox","id":"sh/o32x4jip","slide":1,"text":"Báo cáo tiến độ\nPuppeteer","textPreview":"Báo cáo tiến độ | Puppeteer","textChars":25,"textLines":2,"bbox":[72,150,720,170]}
+{"kind":"textbox","id":"sh/n2tgbe14","slide":1,"text":"Reproduce GSM-Hard và hướng cải thiện\nCombinatorial Generalization","textPreview":"Reproduce GSM-Hard và hướng cải thiện | Combinatorial Generalization","textChars":66,"textLines":2,"bbox":[76,346,720,92]}
+{"kind":"textbox","id":"sh/m1kf290j","slide":1,"text":"Dựa trên Dang et al. (2025) & Mahajan et al. (2022)","textPreview":"Dựa trên Dang et al. (2025) & Mahajan et al. (2022)","textChars":51,"textLines":1,"bbox":[78,602,620,36]}
+{"kind":"shape","id":"sh/x8vyhoj6","slide":1,"bbox":[760,120,388.8,0]}
+{"kind":"shape","id":"sh/w7mx8jil","slide":1,"bbox":[760,120,0,388.8]}
+{"kind":"shape","id":"sh/b6tgfy10","slide":1,"bbox":[760,171.84,388.8,0]}
+{"kind":"shape","id":"sh/a5kf6t0f","slide":1,"bbox":[811.84,120,0,388.8]}
+{"kind":"shape","id":"sh/lwvyl8j2","slide":1,"bbox":[760,223.68,388.8,0]}
+{"kind":"shape","id":"sh/kbmxc3ix","slide":1,"bbox":[863.68,120,0,388.8]}
+{"kind":"shape","id":"sh/y9c3at4n","slide":1,"bbox":[760,275.52,388.8,0]}
+{"kind":"shape","id":"sh/zal43y58","slide":1,"bbox":[915.52,120,0,388.8]}
+{"kind":"shape","id":"sh/kbulc3mt","slide":1,"bbox":[760,327.36,388.8,0]}
+{"kind":"shape","id":"sh/lc3m58ne","slide":1,"bbox":[967.36,120,0,388.8]}
+{"kind":"shape","id":"sh/mdc3et4z","slide":1,"bbox":[760,379.2,388.8,0]}
+{"kind":"shape","id":"sh/7e547y54","slide":1,"bbox":[1019.2,120,0,388.8]}
+{"kind":"shape","id":"sh/8felg3mp","slide":1,"bbox":[760,431.04,388.8,0]}
+{"kind":"shape","id":"sh/9gnm98na","slide":1,"bbox":[1071.04,120,0,388.8]}
+{"kind":"shape","id":"sh/2hs3294f","slide":1,"bbox":[760,482.88,388.8,0]}
+{"kind":"shape","id":"sh/3i1kve50","slide":1,"bbox":[1122.88,120,0,388.8]}
+{"kind":"shape","id":"sh/rmx03als","slide":1,"bbox":[792.4,373.8,70.2,70.2]}
+{"kind":"shape","id":"sh/6loja5k7","slide":1,"bbox":[862.6,373.8,70.2,75.6]}
+{"kind":"shape","id":"sh/tozi5k3y","slide":1,"bbox":[932.8,336,59.4,113.4]}
+{"kind":"shape","id":"sh/sn61cf2d","slide":1,"bbox":[992.2,336,75.6,54]}
+{"kind":"shape","id":"sh/jyx0zqlw","slide":1,"bbox":[1067.8,260.4,59.4,129.6]}
+{"kind":"shape","id":"sh/ixoz65kb","slide":1,"bbox":[862.6,336,129.6,37.8]}
+{"kind":"shape","id":"sh/5kfi103m","slide":1,"bbox":[992.2,260.4,135,75.6]}
+{"kind":"shape","id":"sh/4z6h8v21","slide":1,"bbox":[965.2,238.8,27,97.2]}
+{"kind":"shape","id":"sh/3uh0bul0","slide":1,"bbox":[878.8,265.8,113.4,70.2]}
+{"kind":"shape","id":"sh/2t8jipkf","slide":1,"bbox":[878.8,238.8,86.4,27]}
+{"kind":"shape","id":"sh/kz2xcrix","slide":1,"bbox":[932.8,238.8,32.4,210.6]}
+{"kind":"shape","id":"sh/l0by5wji","slide":1,"bbox":[792.4,336,199.8,108]}
+{"kind":"shape","id":"sh/yxkfah0r","slide":1,"bbox":[785.92,437.52,12.96,12.96]}
+{"kind":"shape","id":"sh/zytg3m1c","slide":1,"bbox":[856.12,367.32,12.96,12.96]}
+{"kind":"shape","id":"sh/832xgrit","slide":1,"bbox":[926.32,442.92,12.96,12.96]}
+{"kind":"shape","id":"sh/94by9wje","slide":1,"bbox":[985.72,329.52,12.96,12.96]}
+{"kind":"shape","id":"sh/m1kfe103","slide":1,"bbox":[1061.32,383.52,12.96,12.96]}
+{"kind":"shape","id":"sh/72tg7m1o","slide":1,"bbox":[1120.72,253.92,12.96,12.96]}
+{"kind":"shape","id":"sh/wrmxkbi5","slide":1,"bbox":[958.72,232.32,12.96,12.96]}
+{"kind":"shape","id":"sh/hsvydgjq","slide":1,"bbox":[872.32,259.32,12.96,12.96]}
+{"kind":"notes","id":"nt/3mj754","slide":1,"text":""}
+{"kind":"slide","id":"sl/9aspb0","slide":2,"title":"Pipeline đã chạy được, nhưng mới ở quy mô nhỏ","textShapes":15}
+{"kind":"textbox","id":"sh/rm9ovax8","slide":2,"text":"Pipeline đã chạy được, nhưng mới ở quy mô nhỏ","textPreview":"Pipeline đã chạy được, nhưng mới ở quy mô nhỏ","textChars":45,"textLines":1,"bbox":[70,52,850,64]}
+{"kind":"textbox","id":"sh/snip4fyd","slide":2,"text":"Mục tiêu hiện tại: xác nhận reproduce loop trước khi mở rộng bằng A100.","textPreview":"Mục tiêu hiện tại: xác nhận reproduce loop trước khi mở rộng bằng A100.","textChars":71,"textLines":1,"bbox":[72,112,900,34]}
+{"kind":"textbox","id":"sh/t8r6xkfy","slide":2,"text":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textPreview":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textChars":49,"textLines":1,"bbox":[72,680,500,20]}
+{"kind":"textbox","id":"sh/e9076pgj","slide":2,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1160,676,50,24]}
+{"kind":"shape","id":"sh/fa98zux4","slide":2,"bbox":[86,190,210,128]}
+{"kind":"textbox","id":"sh/gb2p8fyp","slide":2,"text":"38","textPreview":"38","textChars":2,"textLines":1,"bbox":[104,208,174,48]}
+{"kind":"textbox","id":"sh/1cbq1kfa","slide":2,"text":"sample GSM-Hard đã train thử nghiệm","textPreview":"sample GSM-Hard đã train thử nghiệm","textChars":35,"textLines":1,"bbox":[104,262,174,42]}
+{"kind":"shape","id":"sh/2dk7apgv","slide":2,"bbox":[332,190,210,128]}
+{"kind":"textbox","id":"sh/3et83uxg","slide":2,"text":"38","textPreview":"38","textChars":2,"textLines":1,"bbox":[350,208,174,48]}
+{"kind":"textbox","id":"sh/jehsv6xo","slide":2,"text":"sample đã test lại trên checkpoint vừa train","textPreview":"sample đã test lại trên checkpoint vừa train","textChars":44,"textLines":1,"bbox":[350,262,174,42]}
+{"kind":"shape","id":"sh/id8bm1w3","slide":2,"bbox":[578,190,210,128]}
+{"kind":"textbox","id":"sh/5gjaxgfu","slide":2,"text":"↑","textPreview":"↑","textChars":1,"textLines":1,"bbox":[596,208,174,48]}
+{"kind":"textbox","id":"sh/kfqtobe9","slide":2,"text":"accuracy tăng trên tập train/test nội bộ","textPreview":"accuracy tăng trên tập train/test nội bộ","textChars":40,"textLines":1,"bbox":[596,262,174,42]}
+{"kind":"shape","id":"sh/vahsr6xc","slide":2,"bbox":[824,190,210,128]}
+{"kind":"textbox","id":"sh/a98ri1g7","slide":2,"text":"A100","textPreview":"A100","textChars":4,"textLines":1,"bbox":[842,208,174,48]}
+{"kind":"textbox","id":"sh/xczatgfi","slide":2,"text":"đang xin tài nguyên để mở rộng scale","textPreview":"đang xin tài nguyên để mở rộng scale","textChars":36,"textLines":1,"bbox":[842,262,174,42]}
+{"kind":"shape","id":"sh/wbqtkbyx","slide":2,"bbox":[120,400,8,8]}
+{"kind":"textbox","id":"sh/f61s3qxw","slide":2,"text":"Training loop, logging, checkpoint và embedding-based state representation đã hoạt động.","textPreview":"Training loop, logging, checkpoint và embedding-based state representation đã hoạt động.","textChars":88,"textLines":1,"bbox":[140,392,900,46]}
+{"kind":"shape","id":"sh/u5sbulwb","slide":2,"bbox":[120,452,8,8]}
+{"kind":"textbox","id":"sh/q1wvmpgj","slide":2,"text":"Token cost chưa được thống kê đầy đủ, nên kết luận hiện tại mới là tín hiệu ban đầu.","textPreview":"Token cost chưa được thống kê đầy đủ, nên kết luận hiện tại mới là tín hiệu ban đầu.","textChars":84,"textLines":1,"bbox":[140,444,900,46]}
+{"kind":"shape","id":"sh/r25wvuh4","slide":2,"bbox":[120,504,8,8]}
+{"kind":"textbox","id":"sh/c3edozyp","slide":2,"text":"Bước kế tiếp là reproduce trên nhiều sample hơn và kiểm tra cost/agent-count.","textPreview":"Bước kế tiếp là reproduce trên nhiều sample hơn và kiểm tra cost/agent-count.","textChars":77,"textLines":1,"bbox":[140,496,900,46]}
+{"kind":"shape","id":"sh/d4nex4za","slide":2,"bbox":[1035,396,151.2,0]}
+{"kind":"shape","id":"sh/e5wvq9gf","slide":2,"bbox":[1035,396,0,151.2]}
+{"kind":"shape","id":"sh/z65wzeh0","slide":2,"bbox":[1035,416.16,151.2,0]}
+{"kind":"shape","id":"sh/07ydsjyl","slide":2,"bbox":[1055.16,396,0,151.2]}
+{"kind":"shape","id":"sh/l87e14z6","slide":2,"bbox":[1035,436.32,151.2,0]}
+{"kind":"shape","id":"sh/u9cve50b","slide":2,"bbox":[1075.32,396,0,151.2]}
+{"kind":"shape","id":"sh/falcnahw","slide":2,"bbox":[1035,456.48,151.2,0]}
+{"kind":"shape","id":"sh/xoryt8je","slide":2,"bbox":[1095.48,396,0,151.2]}
+{"kind":"shape","id":"sh/w3ih0nit","slide":2,"bbox":[1035,476.64,151.2,0]}
+{"kind":"shape","id":"sh/v29gri18","slide":2,"bbox":[1115.64,396,0,151.2]}
+{"kind":"shape","id":"sh/a10fyd0n","slide":2,"bbox":[1035,496.8,151.2,0]}
+{"kind":"shape","id":"sh/5sbyxsja","slide":2,"bbox":[1135.8,396,0,151.2]}
+{"kind":"shape","id":"sh/kr2h4ni5","slide":2,"bbox":[1035,516.96,151.2,0]}
+{"kind":"shape","id":"sh/jqtgvi1k","slide":2,"bbox":[1155.96,396,0,151.2]}
+{"kind":"shape","id":"sh/ip0z2d0z","slide":2,"bbox":[1035,537.12,151.2,0]}
+{"kind":"shape","id":"sh/lw7yloj6","slide":2,"bbox":[1176.12,396,0,151.2]}
+{"kind":"shape","id":"sh/0vyxsjil","slide":2,"bbox":[1047.6,494.7,27.3,27.3]}
+{"kind":"shape","id":"sh/o3qtgv6l","slide":2,"bbox":[1074.9,494.7,27.3,29.4]}
+{"kind":"shape","id":"sh/p4zap076","slide":2,"bbox":[1102.2,480,23.1,44.1]}
+{"kind":"shape","id":"sh/21obelof","slide":2,"bbox":[1125.3,480,29.4,21]}
+{"kind":"shape","id":"sh/32hsnqp0","slide":2,"bbox":[1154.7,450.6,23.1,50.4]}
+{"kind":"shape","id":"sh/gz69cb69","slide":2,"bbox":[1074.9,480,50.4,14.7]}
+{"kind":"shape","id":"sh/10falg7u","slide":2,"bbox":[1125.3,450.6,52.5,29.4]}
+{"kind":"shape","id":"sh/exoraloj","slide":2,"bbox":[1114.8,442.2,10.5,37.8]}
+{"kind":"shape","id":"sh/fyxsjqpo","slide":2,"bbox":[1081.2,452.7,44.1,27.3]}
+{"kind":"shape","id":"sh/sv698b6d","slide":2,"bbox":[1081.2,442.2,33.6,10.5]}
+{"kind":"shape","id":"sh/twfahg7y","slide":2,"bbox":[1102.2,442.2,12.6,81.9]}
+{"kind":"shape","id":"sh/v6dsr69k","slide":2,"bbox":[1047.6,480,77.7,42]}
+{"kind":"shape","id":"sh/u54bi1sz","slide":2,"bbox":[1045.08,519.48,5.04,5.04]}
+{"kind":"shape","id":"sh/hsvutgrq","slide":2,"bbox":[1072.38,492.18,5.04,5.04]}
+{"kind":"shape","id":"sh/w7mtkba5","slide":2,"bbox":[1099.68,521.58,5.04,5.04]}
+{"kind":"shape","id":"sh/judcv69w","slide":2,"bbox":[1122.78,477.48,5.04,5.04]}
+{"kind":"shape","id":"sh/it4bmlsb","slide":2,"bbox":[1152.18,498.48,5.04,5.04]}
+{"kind":"shape","id":"sh/5wfuxgrm","slide":2,"bbox":[1175.28,448.08,5.04,5.04]}
+{"kind":"shape","id":"sh/4v6tobah","slide":2,"bbox":[1112.28,439.68,5.04,5.04]}
+{"kind":"shape","id":"sh/ryxczq9s","slide":2,"bbox":[1078.68,450.18,5.04,5.04]}
+{"kind":"notes","id":"nt/9aspb0","slide":2,"text":""}
+{"kind":"slide","id":"sl/awfjdq","slide":3,"title":"Bản reproduce hiện tại có ba khác biệt chính so với paper","textShapes":5}
+{"kind":"textbox","id":"sh/rexobydo","slide":3,"text":"Bản reproduce hiện tại có ba khác biệt chính so với paper","textPreview":"Bản reproduce hiện tại có ba khác biệt chính so với paper","textChars":57,"textLines":1,"bbox":[70,52,850,64]}
+{"kind":"textbox","id":"sh/cf6543e9","slide":3,"text":"Các thay đổi này giúp chạy được trong điều kiện hiện tại, nhưng cần ghi rõ khi so sánh.","textPreview":"Các thay đổi này giúp chạy được trong điều kiện hiện tại, nhưng cần ghi rõ khi so sánh.","textChars":87,"textLines":1,"bbox":[72,112,900,34]}
+{"kind":"textbox","id":"sh/dgz6d8vu","slide":3,"text":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textPreview":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textChars":49,"textLines":1,"bbox":[72,680,500,20]}
+{"kind":"textbox","id":"sh/2pony9w7","slide":3,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1160,676,50,24]}
+{"kind":"textbox","id":"sh/4r650jex","slide":3,"text":"Takeaway: kết quả hiện tại nên được trình bày là reproduce có điều chỉnh, không phải replication hoàn toàn setup gốc.","textPreview":"Takeaway: kết quả hiện tại nên được trình bày là reproduce có điều chỉnh, không phải replication hoàn toàn setup gốc.","textChars":117,"textLines":1,"bbox":[84,545,1040,60]}
+{"kind":"table","id":"tb/yhsjy1oj","slide":3,"name":"","rows":4,"cols":4,"preview":"Thành phần | Paper gốc | Thiết lập hiện tại | Ý nghĩa khi so sánh","bbox":[64,170,1152,330]}
+{"kind":"notes","id":"nt/awfjdq","slide":3,"text":""}
+{"kind":"slide","id":"sl/04qjle","slide":4,"title":"Kết quả bước đầu: checkpoint train 38 sample đã cải thiện accuracy","textShapes":5}
+{"kind":"textbox","id":"sh/mpkz6dsb","slide":4,"text":"Kết quả bước đầu: checkpoint train 38 sample đã cải thiện accuracy","textPreview":"Kết quả bước đầu: checkpoint train 38 sample đã cải thiện accuracy","textChars":66,"textLines":1,"bbox":[70,52,850,64]}
+{"kind":"textbox","id":"sh/9sbyhsbm","slide":4,"text":"Bảng dưới giữ cả mốc paper và các dòng reproduce hiện tại để điền/token-cost tiếp.","textPreview":"Bảng dưới giữ cả mốc paper và các dòng reproduce hiện tại để điền/token-cost tiếp.","textChars":82,"textLines":1,"bbox":[72,112,900,34]}
+{"kind":"textbox","id":"sh/8r2h8na1","slide":4,"text":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textPreview":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textChars":49,"textLines":1,"bbox":[72,680,500,20]}
+{"kind":"textbox","id":"sh/zm9gbitk","slide":4,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1160,676,50,24]}
+{"kind":"textbox","id":"sh/lorydsbq","slide":4,"text":"Cần bổ sung: token cost, số agent/path trung bình, và evaluation trên sample chưa train.","textPreview":"Cần bổ sung: token cost, số agent/path trung bình, và evaluation trên sample chưa train.","textChars":88,"textLines":1,"bbox":[80,600,1000,42]}
+{"kind":"table","id":"tb/zmdgb2t0","slide":4,"name":"","rows":7,"cols":6,"preview":"Setting | Policy | #Train | #Eval | Accuracy | Avg token cost","bbox":[58,160,1164,410]}
+{"kind":"notes","id":"nt/04qjle","slide":4,"text":""}
+{"kind":"slide","id":"sl/49u5tl","slide":5,"title":"Ba điểm yếu hiện tại đều làm giảm khả năng generalize","textShapes":4}
+{"kind":"textbox","id":"sh/lgjup8z6","slide":5,"text":"Ba điểm yếu hiện tại đều làm giảm khả năng generalize","textPreview":"Ba điểm yếu hiện tại đều làm giảm khả năng generalize","textChars":53,"textLines":1,"bbox":[70,52,850,64]}
+{"kind":"textbox","id":"sh/ytsbetgf","slide":5,"text":"Sơ đồ từ báo cáo: state embedding vẫn đi vào MLP fixed slots và termination chưa tận dụng answer hợp lệ.","textPreview":"Sơ đồ từ báo cáo: state embedding vẫn đi vào MLP fixed slots và termination chưa tận dụng answer hợp lệ.","textChars":104,"textLines":1,"bbox":[72,112,900,34]}
+{"kind":"textbox","id":"sh/zu1cnyh0","slide":5,"text":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textPreview":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textChars":49,"textLines":1,"bbox":[72,680,500,20]}
+{"kind":"textbox","id":"sh/cratc3y9","slide":5,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1160,676,50,24]}
+{"kind":"image","id":"im/kn2l4fa9","slide":5,"name":"","geometry":"roundRect","alt":"Sơ đồ các điểm yếu trong orchestration hiện tại","bbox":[72,150,1136,500]}
+{"kind":"notes","id":"nt/49u5tl","slide":5,"text":""}
+{"kind":"slide","id":"sl/38yx0b","slide":6,"title":"Hướng cải thiện: bỏ phụ thuộc vào fixed agent slots","textShapes":5}
+{"kind":"textbox","id":"sh/6xgjm9cj","slide":6,"text":"Hướng cải thiện: bỏ phụ thuộc vào fixed agent slots","textPreview":"Hướng cải thiện: bỏ phụ thuộc vào fixed agent slots","textChars":51,"textLines":1,"bbox":[70,52,850,64]}
+{"kind":"textbox","id":"sh/t0rix4vu","slide":6,"text":"Mục tiêu là giữ tinh thần Puppeteer nhưng làm policy thích nghi với agent pool thay đổi.","textPreview":"Mục tiêu là giữ tinh thần Puppeteer nhưng làm policy thích nghi với agent pool thay đổi.","textChars":88,"textLines":1,"bbox":[72,112,900,34]}
+{"kind":"textbox","id":"sh/szi1ozu9","slide":6,"text":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textPreview":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textChars":49,"textLines":1,"bbox":[72,680,500,20]}
+{"kind":"textbox","id":"sh/jup0ruds","slide":6,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1160,676,50,24]}
+{"kind":"textbox","id":"sh/5w7it4vy","slide":6,"text":"Ưu tiên triển khai: capability-aware scorer + permutation-invariant agent encoder.","textPreview":"Ưu tiên triển khai: capability-aware scorer + permutation-invariant agent encoder.","textChars":82,"textLines":1,"bbox":[78,604,980,38]}
+{"kind":"table","id":"tb/v6pkfmdg","slide":6,"name":"","rows":5,"cols":3,"preview":"Hướng cải thiện | Ý tưởng kỹ thuật | Kỳ vọng đánh giá","bbox":[58,162,1164,420]}
+{"kind":"notes","id":"nt/38yx0b","slide":6,"text":""}
+{"kind":"slide","id":"sl/7zppv0","slide":7,"title":"Bước tiếp theo nên chuyển từ accuracy sang generalization gap","textShapes":15}
+{"kind":"textbox","id":"sh/72pk3i1s","slide":7,"text":"Bước tiếp theo nên chuyển từ accuracy sang generalization gap","textPreview":"Bước tiếp theo nên chuyển từ accuracy sang generalization gap","textChars":61,"textLines":1,"bbox":[70,52,850,64]}
+{"kind":"textbox","id":"sh/83ylwnid","slide":7,"text":"Khoảng trống: benchmark CG hiện chủ yếu dùng game; reasoning benchmark kiểu Dang et al. còn ít protocol rõ ràng.","textPreview":"Khoảng trống: benchmark CG hiện chủ yếu dùng game; reasoning benchmark kiểu Dang et al. còn ít protocol rõ ràng.","textChars":112,"textLines":1,"bbox":[72,112,900,34]}
+{"kind":"textbox","id":"sh/94725sjy","slide":7,"text":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textPreview":"Puppeteer reproduce Â· GSM-Hard Â· Generalization","textChars":49,"textLines":1,"bbox":[72,680,500,20]}
+{"kind":"textbox","id":"sh/ydw3qd0b","slide":7,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1160,676,50,24]}
+{"kind":"shape","id":"sh/zy5kzi1w","slide":7,"bbox":[82,190,260,190]}
+{"kind":"textbox","id":"sh/0zels3ih","slide":7,"text":"Seen composition","textPreview":"Seen composition","textChars":16,"textLines":1,"bbox":[104,212,216,42]}
+{"kind":"textbox","id":"sh/l07218j2","slide":7,"text":"So sánh với baseline Puppeteer trên agent pool cố định.","textPreview":"So sánh với baseline Puppeteer trên agent pool cố định.","textChars":55,"textLines":1,"bbox":[104,272,216,72]}
+{"kind":"shape","id":"sh/it032x0f","slide":7,"bbox":[368,190,260,190]}
+{"kind":"textbox","id":"sh/ju94b210","slide":7,"text":"Shuffle personas","textPreview":"Shuffle personas","textChars":16,"textLines":1,"bbox":[390,212,216,42]}
+{"kind":"textbox","id":"sh/nexsjils","slide":7,"text":"Kiểm tra policy có phụ thuộc thứ tự index không.","textPreview":"Kiểm tra policy có phụ thuộc thứ tự index không.","textChars":48,"textLines":1,"bbox":[390,272,216,72]}
+{"kind":"shape","id":"sh/mdoradk7","slide":7,"bbox":[654,190,260,190]}
+{"kind":"textbox","id":"sh/9gfals3y","slide":7,"text":"Leave-one-agent-out","textPreview":"Leave-one-agent-out","textChars":19,"textLines":1,"bbox":[676,212,216,42]}
+{"kind":"textbox","id":"sh/of69cn2d","slide":7,"text":"Train thiếu một role/model, test khi thêm lại.","textPreview":"Train thiếu một role/model, test khi thêm lại.","textChars":46,"textLines":1,"bbox":[676,272,216,72]}
+{"kind":"shape","id":"sh/b2xsn2lo","slide":7,"bbox":[940,190,260,190]}
+{"kind":"textbox","id":"sh/a1orexkj","slide":7,"text":"Add / substitute agent","textPreview":"Add / substitute agent","textChars":22,"textLines":1,"bbox":[962,212,216,42]}
+{"kind":"textbox","id":"sh/x4zapc3u","slide":7,"text":"Thêm model mới hoặc thay LLM của một role.","textPreview":"Thêm model mới hoặc thay LLM của một role.","textChars":42,"textLines":1,"bbox":[962,272,216,72]}
+{"kind":"textbox","id":"sh/w3q9g729","slide":7,"text":"Metrics cần báo cáo","textPreview":"Metrics cần báo cáo","textChars":19,"textLines":1,"bbox":[110,448,320,36]}
+{"kind":"shape","id":"sh/j6hsr2l0","slide":7,"bbox":[125,510,8,8]}
+{"kind":"textbox","id":"sh/y58rihkf","slide":7,"text":"Accuracy và generalization gap giữa seen vs. unseen composition","textPreview":"Accuracy và generalization gap giữa seen vs. unseen composition","textChars":63,"textLines":1,"bbox":[145,502,900,46]}
+{"kind":"shape","id":"sh/u1sva14n","slide":7,"bbox":[125,562,8,8]}
+{"kind":"textbox","id":"sh/v21cj658","slide":7,"text":"Avg token cost, số step/path, số agent trung bình và early-stop rate","textPreview":"Avg token cost, số step/path, số agent trung bình và early-stop rate","textChars":68,"textLines":1,"bbox":[145,554,900,46]}
+{"kind":"shape","id":"sh/g3udcbmt","slide":7,"bbox":[955,438,162,0]}
+{"kind":"shape","id":"sh/h43ulgne","slide":7,"bbox":[955,438,0,162]}
+{"kind":"shape","id":"sh/6xsv614r","slide":7,"bbox":[955,459.6,162,0]}
+{"kind":"shape","id":"sh/7y1cf65w","slide":7,"bbox":[976.6,438,0,162]}
+{"kind":"shape","id":"sh/8zad8bmh","slide":7,"bbox":[955,481.2,162,0]}
+{"kind":"shape","id":"sh/t0juhgn2","slide":7,"bbox":[998.2,438,0,162]}
+{"kind":"shape","id":"sh/qtcvil4v","slide":7,"bbox":[955,502.8,162,0]}
+{"kind":"shape","id":"sh/ru5wrq5g","slide":7,"bbox":[1019.8,438,0,162]}
+{"kind":"shape","id":"sh/l0r6xobu","slide":7,"bbox":[955,524.4,162,0]}
+{"kind":"shape","id":"sh/0zip4ja9","slide":7,"bbox":[1041.4,438,0,162]}
+{"kind":"shape","id":"sh/zypoveto","slide":7,"bbox":[955,546,162,0]}
+{"kind":"shape","id":"sh/yxg729s3","slide":7,"bbox":[1063,438,0,162]}
+{"kind":"shape","id":"sh/dw76tobi","slide":7,"bbox":[955,567.6,162,0]}
+{"kind":"shape","id":"sh/cbyp0jax","slide":7,"bbox":[1084.6,438,0,162]}
+{"kind":"shape","id":"sh/baporets","slide":7,"bbox":[955,589.2,162,0]}
+{"kind":"shape","id":"sh/q9gny9s7","slide":7,"bbox":[1106.2,438,0,162]}
+{"kind":"shape","id":"sh/xsb658b2","slide":7,"bbox":[968.5,543.75,29.25,29.25]}
+{"kind":"shape","id":"sh/w72pc3ah","slide":7,"bbox":[997.75,543.75,29.25,31.5]}
+{"kind":"shape","id":"sh/4z65gj61","slide":7,"bbox":[1027,528,24.75,47.25]}
+{"kind":"shape","id":"sh/50f69o76","slide":7,"bbox":[1051.75,528,31.5,22.5]}
+{"kind":"shape","id":"sh/ixone9ov","slide":7,"bbox":[1083.25,496.5,24.75,54]}
+{"kind":"shape","id":"sh/jyxo7epg","slide":7,"bbox":[997.75,528,54,15.75]}
+{"kind":"shape","id":"sh/s36pkj6x","slide":7,"bbox":[1051.75,496.5,56.25,31.5]}
+{"kind":"shape","id":"sh/d4f6do7i","slide":7,"bbox":[1040.5,487.5,11.25,40.5]}
+{"kind":"shape","id":"sh/61oni9or","slide":7,"bbox":[1004.5,498.75,47.25,29.25]}
+{"kind":"shape","id":"sh/r2xobepc","slide":7,"bbox":[1004.5,487.5,36,11.25]}
+{"kind":"shape","id":"sh/0rqpo36t","slide":7,"bbox":[1027,487.5,13.5,87.75]}
+{"kind":"shape","id":"sh/1sz6h87e","slide":7,"bbox":[968.5,528,83.25,45]}
+{"kind":"shape","id":"sh/bm18n29w","slide":7,"bbox":[965.8,570.3,5.4,5.4]}
+{"kind":"shape","id":"sh/alsrex8b","slide":7,"bbox":[995.05,541.05,5.4,5.4]}
+{"kind":"shape","id":"sh/xo3qpsrm","slide":7,"bbox":[1024.3,572.55,5.4,5.4]}
+{"kind":"shape","id":"sh/cna9g7q1","slide":7,"bbox":[1049.05,525.3,5.4,5.4]}
+{"kind":"shape","id":"sh/ny18ji9k","slide":7,"bbox":[1080.55,547.8,5.4,5.4]}
+{"kind":"shape","id":"sh/2xsrad8z","slide":7,"bbox":[1105.3,493.8,5.4,5.4]}
+{"kind":"shape","id":"sh/pkjqlsrq","slide":7,"bbox":[1037.8,484.8,5.4,5.4]}
+{"kind":"shape","id":"sh/oja9cnq5","slide":7,"bbox":[1001.8,496.05,5.4,5.4]}
+{"kind":"notes","id":"nt/7zppv0","slide":7,"text":""}

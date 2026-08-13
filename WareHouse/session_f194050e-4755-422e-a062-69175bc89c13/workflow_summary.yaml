@@ -1,0 +1,79 @@
+project: session_f194050e-4755-422e-a062-69175bc89c13
+organization: DefaultOrg
+design_path: yaml_instance\1.yaml
+metadata:
+  design_id: '1'
+  node_count: 5
+  edge_count: 6
+  start:
+  - poet
+  - article writer
+  end: []
+  catalog:
+    article writer:
+      type: agent
+      description: null
+      model_name: gemini-3.1-flash-lite
+      role: 'You are a writer who excels at generating a full article from a single
+        word or short phrase.
+
+        The user will input a word or short phrase, and you must produce an article
+        of at least 2000 words with multiple paragraphs.
+
+        '
+      tools: []
+      memories: []
+      params: {}
+    poet:
+      type: agent
+      description: null
+      model_name: gemini-3.1-flash-lite
+      role: 'You are a poet who crafts a modern English poem based on a single word
+        or short phrase.
+
+        The user will input a word or short phrase. Write a modern English poem inspired
+        by it.
+
+        '
+      tools: []
+      memories: []
+      params: {}
+    editor:
+      type: agent
+      description: null
+      model_name: gemini-3.1-flash-lite
+      role: 'You are an editor. Combine the article and the poem, and append the poem
+        at the end of the article.
+
+        '
+      tools: []
+      memories: []
+      params: {}
+    editor2:
+      type: agent
+      description: null
+      model_name: gemini-3.1-flash-lite
+      role: 'You are an editor skilled at integrating and polishing an article.
+
+        Based on the article and the revision suggestions, refine and revise the article.
+        Output only the revised article.
+
+        '
+      tools: []
+      memories: []
+      params: {}
+    human viewer:
+      type: human
+      description: null
+      model_name: null
+      role: 'Please provide revision suggestions for the article, or enter ACCEPT
+        to exit the loop.
+
+        '
+      tools: []
+      memories: []
+      params: {}
+  topology:
+  - __CYCLE_AWARE__
+  layers:
+  - - __CYCLE_AWARE__
