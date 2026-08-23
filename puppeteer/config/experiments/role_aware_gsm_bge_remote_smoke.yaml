@@ -1,0 +1,78 @@
+run_id: gsm_bge_remote_smoke
+mode: train
+seed: 42
+personas_path: personas/role_aware/s0_pool.jsonl
+output_dir: runs
+
+dataset:
+  name: gsm-hard
+  mode: train
+  data_limit: null
+  data_start: 0
+  split_seed: 42
+  reference_items_per_teammate: 50
+  probe_items_per_teammate: 10
+
+tools:
+  allowed:
+    - run_python
+
+profiles:
+  alpha: 0.2
+  reset_scope: run
+  update_strategy: role_task_intersection
+  evidence_level: path_terminal
+  deduplicate_within_path: true
+  aggregate_parallel_evidence: true
+  update_global_reliability: true
+  update_role_adherence_separately: true
+  initialization:
+    source: priors
+    path: null
+    required_for_train: false
+
+checkpoint:
+  interval_items: 20
+  snapshot_interval_items: 20
+  keep_snapshots: 3
+
+
+policy:
+  type: role_aware_reinforce
+  device:
+    type: cpu
+  paths:
+    checkpoint_path: checkpoint/role_aware
+    model_path: null
+    load_policy: false
+  training:
+    loading: false
+    training: true
+    learning_rate: 0.0001
+    gamma: 0.99
+    entropy_coef: 0.01
+    lambda_kl_loss: 0.0
+  cost:
+    scale: 0.1
+    growth_rate: 1.0
+    inverse: false
+  policy_mode: train
+
+global_config:
+  graph:
+    max_width: 4
+    max_depth: 2
+
+  task_analyzer:
+    primary:
+      backend: openai_compatible_embedding
+      model: BAAI/bge-large-en-v1.5
+      dim: 1024
+      frozen: true
+      base_url_env: TASK_ANALYZER_BASE_URL
+      api_key_env: TASK_ANALYZER_API_KEY
+      max_input_tokens: 512
+
+  # Tắt trajectory reward chỉ trong smoke test BGE này.
+  trajectory_reward:
+    enabled: false

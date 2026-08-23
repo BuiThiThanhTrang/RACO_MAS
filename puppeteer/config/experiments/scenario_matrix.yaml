@@ -1,0 +1,28 @@
+scenarios:
+  S0:
+    personas_path: personas/role_aware/s0_pool.jsonl
+    description: Seen Qwen/Llama role-backbone combinations.
+  S1:
+    personas_path: personas/role_aware/s1_pool.jsonl
+    description: Unseen role-backbone combinations within Qwen/Llama.
+  S2-backbone:
+    personas_path: personas/role_aware/s2_backbone_pool.jsonl
+    description: Same-family backbone changes; model sizes may differ.
+  S2-role:
+    personas_path: personas/role_aware/s2_role_pool.jsonl
+    description: Role cards reassigned across fixed backbone slots.
+  S2-tools:
+    personas_path: personas/role_aware/s2_tools_pool.jsonl
+    description: Tool availability intervention; configure allowed tools per task.
+  S2-cardinality-small:
+    personas_path: personas/role_aware/s2_cardinality_small_pool.jsonl
+    description: One teammate per role.
+  S2-cardinality-large:
+    personas_path: personas/role_aware/s2_cardinality_large_pool.jsonl
+    description: Three teammates per role.
+  S3-primary:
+    personas_path: personas/role_aware/s3_pool.jsonl
+    description: Fully unseen Mistral-only pool.
+  S3-mixed:
+    personas_path: personas/role_aware/s3_mixed_pool.jsonl
+    description: Secondary mixed Qwen/Llama/Mistral pool.

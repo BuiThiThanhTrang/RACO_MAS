@@ -1,0 +1,9 @@
+{
+  "simple_select": [
+    "Task: {}",
+    "Previously executed actions: {}",
+    "Available candidates (public role and capability data only):\n{}",
+    "Select exactly {} candidate(s) that best fit the next step.",
+    "Return only a JSON array containing exactly {} integer candidate indices, for example [0]. Do not invent candidates or request hidden model/provider identity."
+  ]
+}
