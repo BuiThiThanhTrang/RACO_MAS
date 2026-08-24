@@ -1,4 +1,5 @@
 import subprocess
+import json
 import time
 import torch
 import numpy as np
@@ -8,6 +9,7 @@ import signal
 import math
 
 from model import query_gpt
+from model.query_manager import query_manager
 from model.embedding import OpenAIEmbedding
 from utils.file_utils import read_code, read_text
 
@@ -18,72 +20,108 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class BenchmarkEvaluator:
     @staticmethod
     def commongen_coverage(concepts, text_path):
-        generated_text = read_text(text_path)
-        generated_text = generated_text.lower()
+        generated_text = read_text(text_path).lower()
         concepts = [concept.lower() for concept in concepts]
-        missing_concepts = [concept for concept in concepts if not re.search(rf'\b{re.escape(concept)}\b', generated_text, re.IGNORECASE)]
-        if missing_concepts:
-            return 1 - len(missing_concepts)/len(concepts)
-        return 1
+        if not concepts:
+            return 0.0
+        matched = sum(
+            bool(re.search(rf"\b{re.escape(concept)}\b", generated_text, re.IGNORECASE))
+            for concept in concepts
+        )
+        return matched / len(concepts)
 
     @staticmethod
-    def commongen_gpt_score(concepts, text_path):
+    def commongen_gpt_score(concepts, text_path, judge_model="gemini-3.5-flash"):
         generated_text = read_text(text_path)
-        prompt = '''
-        As a strict StoryMaster, your task is to meticulously evaluate the quality of stories across three primary dimensions: Grammar and Fluency, Context Relevance, and Logic Consistency. Each dimension will be rated on a refined scale from 1 (average) to 4 (perfect), ensuring that only stories of superior quality achieve the highest scores.
-
-        Implement Your Evaluation Mechanism with Enhanced Rigor:
-
-        Grammar and Fluency (Assess the story's linguistic precision and narrative flow):
-        Score 1 (solid): The story is free of grammatical errors, but the narrative lacks the stylistic variety and eloquence that elevate writing to a higher tier.
-        Score 2 (proficient): The narrative demonstrates a strong command of grammar and a coherent flow, yet it does not showcase the level of linguistic artistry found in superior works.
-        Score 3 (excellent): The story exhibits a refined sense of grammar and a compelling narrative flow, with sentence structures that are engaging and demonstrate a high level of craft.
-        Score 4 (masterful): The story is a testament to linguistic excellence, with sentence structures that are not only clear and elegant but also exhibit a creative and sophisticated use of language that captivates and inspires.
-
-        Context Relevance (Examine the coherence, interconnectedness, and depth of content within the story):
-        Score 1 (solid): The story establishes a basic framework of context relevance, but it does not delve into the intricacies of character and thematic development that enrich the narrative.
-        Score 2 (proficient): The narrative demonstrates a clear connection between elements, yet it lacks the depth and multi-layered content that would distinguish it as truly exceptional.
-        Score 3 (excellent): The story interweaves elements with a high degree of relevance, creating a narrative that is coherent and features content that is well-developed and insightful.
-        Score 4 (masterful): The story achieves an extraordinary level of context relevance, with every element artfully woven into a narrative that is not only coherent but also profound in its exploration of themes and characters, offering a rich and immersive experience.
-
-        Logic Consistency (Scrutinize the narrative for logical integrity and internal consistency):
-        Score 1 (solid): The story maintains a logical structure, but there may be occasional lapses in plausibility or minor inconsistencies that slightly undermine its credibility.
-        Score 2 (proficient): The narrative is generally logical, with a clear progression of events and character actions, yet it does not reach the level of seamless consistency expected of a superior story.
-        Score 3 (excellent): The story exhibits a strong logical consistency, with events and character actions that are well-aligned and plausible, contributing to a coherent and believable plot.
-        Score 4 (masterful): The story is characterized by impeccable logical consistency, with every event and character action meticulously aligned to create a plot that is not only coherent but also demonstrates a deep understanding of causality and human behavior.'''
-
-        prompt += '\nStory:\n' + generated_text
-        response_text, _ = query_gpt(prompt)
-        pattern = r'\d+'
-        remedy_prompt = 'Extract the score in each dimension in format: (Grammar and Fluency Score: X. Context Relevance Score: X. Logic Consistency Score: X. Overall Score Score: X.) of the following content.'
-        remedy_prompt += response_text
-        remedy_respond,_ = query_gpt(remedy_prompt)
-        score_list = re.findall(pattern, remedy_respond)
-        my_float_list = [float(item) for item in score_list]
-        score_list = [item/4 for item in my_float_list]
-        score_list = score_list[:3]
-        while len(score_list) != 3:
-            score_list.append(0)
-        return score_list
+        prompt = [
+            {
+                "role": "system",
+                "content": (
+                    "You are the strict StoryMaster used by the Puppeteer CommonGen "
+                    "evaluation. Score three dimensions as integers 1-4. "
+                    "Grammar and Fluency: 1 is grammatically sound but stylistically "
+                    "plain; 2 has strong grammar and coherent flow; 3 has refined, "
+                    "engaging sentence craft; 4 is clear, elegant, creative, and "
+                    "linguistically masterful. Context Relevance: 1 connects the "
+                    "required elements only basically; 2 connects them clearly but "
+                    "without depth; 3 interweaves them coherently with developed "
+                    "content; 4 integrates every element profoundly and immersively. "
+                    "Logic Consistency: 1 is structured with possible minor lapses; "
+                    "2 is generally logical with clear progression; 3 is strongly "
+                    "consistent and plausible; 4 has impeccable causal and internal "
+                    "consistency. Return only JSON with integer keys grammar, "
+                    "relevance, consistency."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Required concepts: {concepts}\nStory:\n{generated_text}\n"
+                    "Return: {\"grammar\":1,\"relevance\":1,\"consistency\":1}"
+                ),
+            },
+        ]
+        response_text, _ = query_manager.query(judge_model, prompt)
+        cleaned = response_text.strip()
+        if cleaned.startswith(chr(96) * 3):
+            lines = cleaned.splitlines()
+            cleaned = "\n".join(lines[1:-1])
+        try:
+            payload = json.loads(cleaned)
+            raw_scores = [
+                int(payload["grammar"]),
+                int(payload["relevance"]),
+                int(payload["consistency"]),
+            ]
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            raw_scores = [int(item) for item in re.findall(r"\b[1-4]\b", cleaned)[:3]]
+        raw_scores = (raw_scores + [0, 0, 0])[:3]
+        return [score / 4.0 for score in raw_scores]
 
     @staticmethod
     def check_commongen(concepts, text_path):
-        # Metric implementation inspired by self-refine project:
-        # https://github.com/madaan/self-refine/tree/main/src/commongen
-        coverage = BenchmarkEvaluator.commongen_coverage(concepts, text_path)
-        coverage = torch.tensor(coverage, dtype=torch.float32, device=DEVICE)  
+        coverage = torch.tensor(
+            BenchmarkEvaluator.commongen_coverage(concepts, text_path),
+            dtype=torch.float32,
+            device=DEVICE,
+        )
         scores = BenchmarkEvaluator.commongen_gpt_score(concepts, text_path)
-        grammar = torch.tensor(scores[0], dtype=torch.float32, device=DEVICE)  
-        relevance = torch.tensor(scores[1], dtype=torch.float32, device=DEVICE)  
-        consistency = torch.tensor(scores[2], dtype=torch.float32, device=DEVICE)  
-        metrics = {"grammar": grammar, "relevance": relevance, "consistency": consistency, "coverage": coverage}
-        mean_score = torch.tensor(sum(scores) / 3, dtype=torch.float32, device=DEVICE)    
-        if coverage == 0:
-            return -1.0, metrics
-        else:
-            return coverage*mean_score, metrics
-        
-    
+        grammar, relevance, consistency = [
+            torch.tensor(score, dtype=torch.float32, device=DEVICE) for score in scores
+        ]
+        metrics = {
+            "grammar": grammar,
+            "relevance": relevance,
+            "consistency": consistency,
+            "coverage": coverage,
+        }
+        mean_score = torch.tensor(sum(scores) / 3, dtype=torch.float32, device=DEVICE)
+        return coverage * mean_score, metrics
+
+    @staticmethod
+    def commongen_binary_success(metrics):
+        return (
+            float(metrics["coverage"]) >= 1.0
+            and float(metrics["grammar"]) >= 0.75
+            and float(metrics["relevance"]) >= 0.75
+            and float(metrics["consistency"]) >= 0.75
+        )
+
+    @staticmethod
+    def srdd_binary_success(metrics):
+        return (
+            float(metrics["executability"]) >= 1.0
+            and float(metrics["completeness"]) >= 1.0
+            and float(metrics["consistency"]) >= 0.70
+        )
+
+    @staticmethod
+    def metrics_to_json(metrics):
+        return {
+            key: float(value.detach().cpu().item()) if isinstance(value, torch.Tensor) else float(value)
+            for key, value in metrics.items()
+        }
+
     @staticmethod
     def check_srdd(code_path, text):
         # Metric implementation inspired by ChatDev project:

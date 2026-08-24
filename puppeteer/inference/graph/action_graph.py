@@ -1,19 +1,21 @@
-import yaml
 from inference.base.graph import Graph
 from agent.agent_info.actions import REASONING_ACTION_LIST, TOOL_ACTION_LIST, TERMINATION_ACTION_LIST
 
 class ActionGraph(Graph):
-    def __init__(self):
+    def __init__(self, allowed_tools=()):
         super().__init__()
         self.REASONING_ACTION_LIST = REASONING_ACTION_LIST
         self.TOOL_ACTION_LIST = TOOL_ACTION_LIST
         self.TERMINATION_ACTION_LIST = TERMINATION_ACTION_LIST
-        global_config = yaml.safe_load(open("./config/global.yaml", "r"))
-        external_tools_enabled = global_config.get("external_tools_enabled")
-        if external_tools_enabled:
-            self.actions_collection = REASONING_ACTION_LIST + TOOL_ACTION_LIST + TERMINATION_ACTION_LIST
-        else:
-            self.actions_collection = REASONING_ACTION_LIST + TERMINATION_ACTION_LIST
+        self.allowed_tools = tuple(allowed_tools)
+        enabled_tools = [tool for tool in TOOL_ACTION_LIST if tool in self.allowed_tools]
+        self.actions_collection = REASONING_ACTION_LIST + enabled_tools + TERMINATION_ACTION_LIST
+
+    def reset_episode_state(self):
+        self._nodes.clear()
+        self._edges.clear()
+        self._nodes_num = 0
+        self._edges_num = 0
 
 
     def add_action(self, action_id, action_data, agent_data):

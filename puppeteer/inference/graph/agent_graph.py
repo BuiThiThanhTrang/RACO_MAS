@@ -1,15 +1,20 @@
+import json
 import yaml
 from inference.base.graph import Graph
-from agent.register.register import agent_global_registry
 import logging
 main_logger = logging.getLogger('global') 
 
 class AgentGraph(Graph):
-    def __init__(self):
-        super().__init__()     
-        self._nodes_num = agent_global_registry.agent_num
+    def __init__(self, registry, profile_store=None, allowed_tools=()):
+        super().__init__()
+        if registry is None:
+            raise ValueError("AgentGraph requires an explicit run-scoped registry")
+        self.registry = registry
+        self.profile_store = profile_store
+        self.allowed_tools = frozenset(allowed_tools)
+        self._nodes_num = self.registry.agent_num
         self._edges_num = 0
-        for agent in agent_global_registry.unique_agents.values():
+        for agent in self.registry.ordered_agents:
             self._add_node(agent)
         print("-"*10+"\033[31mAgent Graph Initialized\033[0m"+"-"*10)
 
@@ -54,19 +59,40 @@ class AgentGraph(Graph):
         assert len(history)!=0, "Dialog history can not be empty"
         return history    
     
+    def is_agent_available(self, agent):
+        return bool(
+            agent.spec.available
+            and all(tool in self.allowed_tools for tool in agent.role_card.tools)
+        )
+
+    @property
+    def availability_mask(self):
+        return tuple(self.is_agent_available(agent) for agent in self._nodes)
+
     @property
     def agent_prompt(self):
-        agent_prompt = []
-        for agent in self._nodes:
-            if not agent.role.startswith("TerminatorAgent"):
-                agent_prompt.append(f"Agent {agent.role} using model {agent.model}' hash: {agent.hash}")
-        agent_prompt = "\n".join(agent_prompt)
-        return agent_prompt
+        return "\n".join(
+            f"Candidate {index}: {json.dumps(view, ensure_ascii=False, sort_keys=True)}"
+            for index, view in enumerate(self.public_agent_views())
+        )
+
+    def public_agent_views(self):
+        if self.profile_store is None:
+            return tuple(
+                agent.role_card.to_dict() | {"available": self.is_agent_available(agent)}
+                for agent in self._nodes
+            )
+        specs = tuple(agent.spec for agent in self._nodes)
+        views = self.profile_store.public_views(specs)
+        return tuple(
+            view.to_dict() | {"available": self.is_agent_available(agent)}
+            for view, agent in zip(views, self._nodes)
+        )
     
     @property
     def terminator_agent_index(self):
         for agent in self._nodes:
-            if agent.role.startswith("TerminatorAgent"):
+            if "terminate" in agent.actions:
                 return agent.index
         return None
     
@@ -74,20 +100,16 @@ class AgentGraph(Graph):
     def search_agent_indices(self):
         indices = []
         for agent in self._nodes:
-            if (
-                agent.role.startswith("WebsiteAgent")
-                or agent.role.startswith("BingAgent")
-                or agent.role.startswith("ArxivAgent")
-            ):
+            if any(tool in agent.tools for tool in ("access_website", "search_bing", "search_arxiv")):
                 indices.append(agent.index)
         return indices
     
     def agent_list(self):
-        agent_info_list = [
-            f"index:{agent.index}, role:{agent.role}, model:{agent.model}, hash:{agent.hash}, tool:{agent.tools}"
-            for agent in self._nodes
-        ]
-        return '\n'.join(agent_info_list)
+        return self.agent_prompt
+
+    def reset_episode_state(self):
+        self._edges.clear()
+        self._edges_num = 0
     
     def visualize(self, path="agent_graph.html"):
         try:

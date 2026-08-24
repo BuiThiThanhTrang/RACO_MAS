@@ -1,81 +1,72 @@
-import os
 import json
-import time
+import os
+
 import pandas as pd
 from tqdm import tqdm
-from tasks.base.base_task import BaseTask
+
+from tasks.splits import load_split_indices
+from tasks.progress import (
+    complete_item,
+    finalize_run,
+    read_jsonl,
+    register_result_path,
+    resolve_data_window,
+)
 
 def load_dataset(mode, data_limit=None, seed=42, data_start=0):
-    mode_path = os.path.join("data", "GSM-Hard", f"{mode}.parquet")
-    test_path = os.path.join("data", "GSM-Hard", "test.parquet")
-    path = mode_path if os.path.exists(mode_path) else test_path
+    path = os.path.join("data", "GSM-Hard", "test.parquet")
     if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"GSM-Hard dataset not found. Expected {mode_path} or {test_path}. "
-            "Run this command from the puppeteer folder or use puppeteer/main.py from the repo root."
-        )
-    data = pd.read_parquet(path)
-    data = data.reset_index().rename(columns={"index": "original_index"})
-    data = data.sample(frac=1, random_state=seed).reset_index(drop=True)
-    data["shuffled_index"] = data.index
+        raise FileNotFoundError(f"GSM-Hard dataset not found: {path}")
+    data = pd.read_parquet(path).reset_index().rename(columns={"index": "original_index"})
+    indices = load_split_indices("gsm_hard", mode, seed=seed)
+    data = data.iloc[indices].reset_index(drop=True)
     if data_start < 0:
         raise ValueError("data_start must be >= 0")
-    if data_limit:
-        return data.iloc[data_start:data_start + data_limit].reset_index(drop=True)
-    return data.iloc[data_start:].reset_index(drop=True)
+    data = data.iloc[data_start:]
+    if data_limit is not None:
+        data = data.iloc[:data_limit]
+    return data.reset_index(drop=True)
 
 def format_question(row, idx):
     return {
         "type": "GSM-Hard",
-        "Question": "You need to write python program to solve math problems:\n" + row["input"],
+        "Question": "Solve this math problem and return the final numerical answer:\n" + row["input"],
         "Answer": row["target"],
-        "id": int(row.get("shuffled_index", idx)),
+        "id": int(row.get("original_index", idx)),
         "original_index": int(row.get("original_index", idx)),
     }
 
 def run(runner, evaluator, results_dir, mode, data_limit=None, data_start=0, seed=42, result_suffix=None):
-    dataset = load_dataset(mode, data_limit, seed=seed, data_start=data_start)
+    initial_data_start = data_start
+    effective_start, effective_limit = resolve_data_window(
+        runner, data_start, data_limit
+    )
+    dataset = load_dataset(
+        mode, effective_limit, seed=seed, data_start=effective_start
+    )
     if result_suffix is None:
-        limit_label = "all" if data_limit is None else str(data_limit)
-        result_suffix = f"start{data_start}_limit{limit_label}_seed{seed}"
+        result_suffix = f"{mode}_start{initial_data_start}_seed{seed}"
     result_path = os.path.join(results_dir, f"gsm-hard_{result_suffix}.jsonl")
-    acc = 0
-
-    with open(result_path, "w", encoding="utf-8") as fd:
-        for idx, row in enumerate(tqdm(dataset.iterrows(), total=len(dataset))):
-            task = format_question(row[1], idx)
-            final_ans = runner.run_reasoning(task)
-            flag = evaluator.check_gsm8k(final_ans, task["Answer"])
-            if flag: acc += 1
-            record = {
-            "id": task["id"],
-            "original_index": task["original_index"],
-            "batch_index": idx,
-            "data_start": data_start,
-            "seed": seed,
-            "pred": final_ans,
-            "answer": task["Answer"],
-            "correct": flag
-            }
-            fd.write(json.dumps(record, ensure_ascii=False) + "\n")
+    file_mode = register_result_path(runner, result_path)
+    with open(result_path, file_mode, encoding="utf-8") as fd:
+        for idx, (_, row) in enumerate(tqdm(dataset.iterrows(), total=len(dataset))):
+            absolute_offset = effective_start + idx
+            task = format_question(row, absolute_offset)
+            prediction = runner.run_reasoning(task)
+            success = evaluator.check_gsm8k(prediction, task["Answer"])
+            fd.write(json.dumps({
+                "id": task["id"], "original_index": task["original_index"],
+                "batch_index": absolute_offset, "split": mode, "seed": seed,
+                "pred": prediction, "answer": task["Answer"], "correct": success,
+            }, ensure_ascii=False) + "\n")
             fd.flush()
-            time.sleep(20) # Prevent API rate limiting
-    
-    total = len(dataset)
-    accuracy = acc / total if total else 0
-    summary = {
-        "task": "gsm-hard",
-        "mode": mode,
-        "total": total,
-        "correct": acc,
-        "accuracy": accuracy,
-        "data_start": data_start,
-        "data_limit": data_limit,
-        "seed": seed,
-        "result_path": result_path,
-    }
-    summary_path = os.path.join(results_dir, f"summary_{result_suffix}.json")
-    with open(summary_path, "w", encoding="utf-8") as fd:
+            os.fsync(fd.fileno())
+            complete_item(runner, task["id"], absolute_offset + 1, result_path)
+    finalize_run(runner)
+    records = read_jsonl(result_path)
+    total = len(records)
+    correct = sum(int(record.get("correct", False)) for record in records)
+    summary = {"task": "gsm-hard", "split": mode, "total": total, "correct": correct,
+               "accuracy": correct / total if total else 0.0, "result_path": result_path}
+    with open(os.path.join(results_dir, f"summary_{result_suffix}.json"), "w", encoding="utf-8") as fd:
         json.dump(summary, fd, ensure_ascii=False, indent=2)
-    print(f"GSM-Hard accuracy: {accuracy:.4f} ({acc}/{total})")
-    print(f"Summary written to: {summary_path}")

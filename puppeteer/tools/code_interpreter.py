@@ -9,6 +9,7 @@ import subprocess
 from subprocess import check_output
 import time
 import signal
+import sys
 
 FILE_REGEX = r"(^//.|^/|^ [a-zA-Z])?:?/.+ (/$)"
 class CodeInterpreter(Tool):
@@ -85,15 +86,17 @@ class PythonInterpreter(CodeInterpreter):
             if len(file_path) > 0:
                 self.move_file(src_path=file_path, dest_path=work_path)
 
-            # Determine the command to run based on the operating system
-            if os.name == 'nt':  # Windows
-                command = f"cd {work_path} && python agent-main.py"
-                process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-            else:  # Linux/macOS
-                command = f"cd {work_path} && python3 agent-main.py"
-                process = subprocess.Popen(command, shell=True, preexec_fn=os.setsid, stdout=subprocess.PIPE,
-                                            stderr=subprocess.PIPE)
+            command = [sys.executable, os.path.basename(code_path)]
+            process_options = {
+                "cwd": work_path,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+            }
+            if os.name == 'nt':
+                process_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                process_options["start_new_session"] = True
+            process = subprocess.Popen(command, **process_options)
 
             try:
                 # Wait for process completion with a timeout of 10 seconds

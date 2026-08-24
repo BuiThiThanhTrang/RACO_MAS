@@ -1,63 +1,271 @@
-from typing import Dict
+from __future__ import annotations
+
 import logging
+import math
+import time
+from typing import Any, Dict, Iterable, Mapping
+
 import yaml
-from tenacity import retry
-from tenacity.stop import stop_after_attempt
-from tenacity.wait import wait_exponential
 
 logger = logging.getLogger("model")
 
 try:
-    with open("./config/global.yaml", "r", encoding="utf-8") as f:
-        GLOBAL_CONFIG = yaml.safe_load(f) or {}
+    with open("./config/global.yaml", "r", encoding="utf-8") as source:
+        GLOBAL_CONFIG = yaml.safe_load(source) or {}
 except FileNotFoundError:
     GLOBAL_CONFIG = {}
 
 CHAT_MAX_RETRY_TIMES = int(GLOBAL_CONFIG.get("max_retry_times", 3))
 CHAT_RETRY_WAIT_MIN = float(GLOBAL_CONFIG.get("retry_wait_min", 1))
 CHAT_RETRY_WAIT_MAX = float(GLOBAL_CONFIG.get("retry_wait_max", 3))
+CHAT_CONTEXT_CONFIG = dict(GLOBAL_CONFIG.get("chat_context") or {})
+CHAT_CONTEXT_MAX_INPUT_TOKENS = int(
+    CHAT_CONTEXT_CONFIG.get("max_input_tokens", 24000)
+)
+CHAT_CONTEXT_RESERVED_OUTPUT_TOKENS = int(
+    CHAT_CONTEXT_CONFIG.get("reserved_output_tokens", 4096)
+)
+CHAT_CONTEXT_RETRY_SHRINK_FACTOR = float(
+    CHAT_CONTEXT_CONFIG.get("retry_shrink_factor", 0.75)
+)
+CHAT_CONTEXT_MIN_INPUT_TOKENS = int(
+    CHAT_CONTEXT_CONFIG.get("min_input_tokens", 8000)
+)
+CHAT_CONTEXT_PRESERVE_SYSTEM = bool(
+    CHAT_CONTEXT_CONFIG.get("preserve_system", True)
+)
+CHAT_CONTEXT_PRESERVE_LATEST = int(
+    CHAT_CONTEXT_CONFIG.get("preserve_latest_messages", 4)
+)
+CHAT_CONTEXT_CHARS_PER_TOKEN = float(
+    CHAT_CONTEXT_CONFIG.get("chars_per_token", 3.0)
+)
+MESSAGE_OVERHEAD_TOKENS = 8
+TRUNCATION_MARKER = "\n[... earlier content truncated ...]\n"
 
-class APIConfig:
-    SLOW_FLAG = False 
-    TRUNCATE_FACTOR = 0
+if CHAT_CONTEXT_MAX_INPUT_TOKENS < CHAT_CONTEXT_MIN_INPUT_TOKENS:
+    raise ValueError("chat_context.max_input_tokens must be >= min_input_tokens")
+if CHAT_CONTEXT_MIN_INPUT_TOKENS <= 0:
+    raise ValueError("chat_context.min_input_tokens must be positive")
+if CHAT_CONTEXT_RESERVED_OUTPUT_TOKENS <= 0:
+    raise ValueError("chat_context.reserved_output_tokens must be positive")
+if not 0.0 < CHAT_CONTEXT_RETRY_SHRINK_FACTOR < 1.0:
+    raise ValueError("chat_context.retry_shrink_factor must be between 0 and 1")
+if CHAT_CONTEXT_PRESERVE_LATEST <= 0:
+    raise ValueError("chat_context.preserve_latest_messages must be positive")
+if CHAT_CONTEXT_CHARS_PER_TOKEN <= 0:
+    raise ValueError("chat_context.chars_per_token must be positive")
+
 
 def model_log_and_print(content):
     if content is not None:
         logger.info(content)
         print(content)
 
-def truncate_messages(messages):
-    max_length = 0
-    max_index = 0
-    for i, msg in enumerate(messages):
-        if len(msg.get('content', '')) > max_length:
-            max_length = len(msg['content'])
-            max_index = i
 
-    content = messages[max_index]['content']
-    factor = 1/(2**APIConfig.TRUNCATE_FACTOR)
-    messages[max_index]['content'] = content[:int(len(content)*factor)]  
-    return messages
+def estimate_text_tokens(content: Any, chars_per_token: float | None = None) -> int:
+    chars_per_token = float(chars_per_token or CHAT_CONTEXT_CHARS_PER_TOKEN)
+    if chars_per_token <= 0:
+        raise ValueError("chars_per_token must be positive")
+    text = "" if content is None else str(content)
+    return int(math.ceil(len(text) / chars_per_token)) if text else 0
+
+
+def estimate_message_tokens(
+    message: Mapping[str, Any], chars_per_token: float | None = None
+) -> int:
+    return MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(
+        message.get("content", ""), chars_per_token
+    )
+
+
+def estimate_messages_tokens(
+    messages: Iterable[Mapping[str, Any]], chars_per_token: float | None = None
+) -> int:
+    return sum(
+        estimate_message_tokens(message, chars_per_token) for message in messages
+    )
+
+
+def _truncate_content(
+    content: Any, token_budget: int, chars_per_token: float
+) -> tuple[str, bool]:
+    text = "" if content is None else str(content)
+    max_chars = max(0, int(token_budget * chars_per_token))
+    if len(text) <= max_chars:
+        return text, False
+    if max_chars <= 0:
+        return "", True
+    if max_chars <= len(TRUNCATION_MARKER) + 16:
+        return text[-max_chars:], True
+    available = max_chars - len(TRUNCATION_MARKER)
+    head_chars = max(1, int(available * 0.4))
+    tail_chars = max(1, available - head_chars)
+    return (
+        text[:head_chars] + TRUNCATION_MARKER + text[-tail_chars:],
+        True,
+    )
+
+
+def _copy_message_with_budget(
+    message: Mapping[str, Any], token_budget: int, chars_per_token: float
+) -> tuple[dict[str, Any] | None, bool]:
+    content_budget = int(token_budget) - MESSAGE_OVERHEAD_TOKENS
+    if content_budget <= 0:
+        return None, False
+    content, truncated = _truncate_content(
+        message.get("content", ""), content_budget, chars_per_token
+    )
+    copied = dict(message)
+    copied["content"] = content
+    return copied, truncated
+
+
+def build_context_window(
+    messages: Iterable[Mapping[str, Any]],
+    max_input_tokens: int = CHAT_CONTEXT_MAX_INPUT_TOKENS,
+    preserve_system: bool = CHAT_CONTEXT_PRESERVE_SYSTEM,
+    preserve_latest_messages: int = CHAT_CONTEXT_PRESERVE_LATEST,
+    chars_per_token: float = CHAT_CONTEXT_CHARS_PER_TOKEN,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Build a bounded request copy without mutating the full dialog."""
+    full_messages = [dict(message) for message in messages]
+    budget = int(max_input_tokens)
+    if budget <= 0:
+        raise ValueError("max_input_tokens must be positive")
+    if preserve_latest_messages <= 0:
+        raise ValueError("preserve_latest_messages must be positive")
+
+    full_tokens = estimate_messages_tokens(full_messages, chars_per_token)
+    if full_tokens <= budget:
+        request = [dict(message) for message in full_messages]
+        return request, {
+            "full_messages": len(full_messages),
+            "request_messages": len(request),
+            "full_estimated_tokens": full_tokens,
+            "request_estimated_tokens": full_tokens,
+            "dropped_messages": 0,
+            "truncated_messages": 0,
+            "budget": budget,
+        }
+
+    selected: dict[int, dict[str, Any]] = {}
+    truncated_count = 0
+    remaining = budget
+    system_index = next(
+        (
+            index
+            for index, message in enumerate(full_messages)
+            if message.get("role") == "system"
+        ),
+        None,
+    )
+
+    if preserve_system and system_index is not None:
+        system_allowance = min(remaining, max(512, budget // 3))
+        copied, truncated = _copy_message_with_budget(
+            full_messages[system_index], system_allowance, chars_per_token
+        )
+        if copied is not None:
+            selected[system_index] = copied
+            used = estimate_message_tokens(copied, chars_per_token)
+            remaining -= used
+            truncated_count += int(truncated)
+
+    non_system_indices = [
+        index for index in range(len(full_messages)) if index != system_index
+    ]
+    latest_user_index = next(
+        (
+            index
+            for index in reversed(non_system_indices)
+            if full_messages[index].get("role") == "user"
+        ),
+        None,
+    )
+    if latest_user_index is not None and remaining > MESSAGE_OVERHEAD_TOKENS:
+        latest_user = full_messages[latest_user_index]
+        required = estimate_message_tokens(latest_user, chars_per_token)
+        copied, truncated = _copy_message_with_budget(
+            latest_user, min(required, remaining), chars_per_token
+        )
+        if copied is not None:
+            selected[latest_user_index] = copied
+            remaining -= estimate_message_tokens(copied, chars_per_token)
+            truncated_count += int(truncated)
+
+        # Add only complete user -> assistant turns. Keeping an arbitrary recent
+        # message suffix can make a compacted request begin with ``assistant``;
+        # strict chat templates (including some Hugging Face providers) reject it.
+        cursor = latest_user_index - 1
+        while cursor > 0:
+            assistant_index = cursor
+            user_index = cursor - 1
+            if system_index == user_index:
+                break
+            if (
+                full_messages[assistant_index].get("role") != "assistant"
+                or full_messages[user_index].get("role") != "user"
+            ):
+                break
+            turn_tokens = estimate_messages_tokens(
+                [full_messages[user_index], full_messages[assistant_index]],
+                chars_per_token,
+            )
+            if turn_tokens > remaining:
+                break
+            selected[user_index] = dict(full_messages[user_index])
+            selected[assistant_index] = dict(full_messages[assistant_index])
+            remaining -= turn_tokens
+            cursor -= 2
+
+    request = [selected[index] for index in sorted(selected)]
+    request_tokens = estimate_messages_tokens(request, chars_per_token)
+    return request, {
+        "full_messages": len(full_messages),
+        "request_messages": len(request),
+        "full_estimated_tokens": full_tokens,
+        "request_estimated_tokens": request_tokens,
+        "dropped_messages": len(full_messages) - len(request),
+        "truncated_messages": truncated_count,
+        "budget": budget,
+    }
 
 
 def calc_max_token(messages, max_tokens):
-    string = "\n".join([str(message["content"]) for message in messages])
-    num_prompt_tokens = int(len(string)//1.8) # approximation of tokens number 
-    gap_between_send_receive = 15 * len(messages)
-    num_prompt_tokens += gap_between_send_receive
-
-    num_max_completion_tokens = max_tokens - num_prompt_tokens
-    logger.info(f"num_prompt_tokens: {num_prompt_tokens}, num_max_completion_tokens: {num_max_completion_tokens}")
-    if num_max_completion_tokens < 0:
-        logger.warning(f"num_max_completion_tokens is negative: {num_max_completion_tokens}")
-        return 0
-    return num_max_completion_tokens
+    return max(0, int(max_tokens) - estimate_messages_tokens(messages))
 
 
-@retry(
-    wait=wait_exponential(min=CHAT_RETRY_WAIT_MIN, max=CHAT_RETRY_WAIT_MAX),
-    stop=stop_after_attempt(CHAT_MAX_RETRY_TIMES),
-)
+def _request_payload(
+    messages, model, model_config_dict, new_client, reserved_output_tokens
+):
+    base_url = str(getattr(new_client, "base_url", ""))
+    is_gemini = model.startswith("gemini") or "generativelanguage.googleapis.com" in base_url
+    is_huggingface_router = "router.huggingface.co" in base_url
+    max_tokens = min(
+        int(model_config_dict.get("max_tokens", reserved_output_tokens)),
+        int(reserved_output_tokens),
+    )
+    common = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": model_config_dict.get("temperature", 0.1),
+        "stream": False,
+    }
+    if is_gemini or is_huggingface_router:
+        return common
+    return {
+        **common,
+        "top_p": model_config_dict.get("top_p", 1.0),
+        "n": model_config_dict.get("n", 1),
+        "stream": model_config_dict.get("stream", False),
+        "frequency_penalty": model_config_dict.get("frequency_penalty", 0.0),
+        "presence_penalty": model_config_dict.get("presence_penalty", 0.0),
+        "logit_bias": model_config_dict.get("logit_bias", {}),
+    }
+
+
 def chat_completion_request(messages, model, new_client, model_config_dict: Dict = None):
     if model_config_dict is None:
         model_config_dict = {
@@ -68,59 +276,84 @@ def chat_completion_request(messages, model, new_client, model_config_dict: Dict
             "frequency_penalty": 0.0,
             "presence_penalty": 0.0,
             "logit_bias": {},
+            "max_tokens": CHAT_CONTEXT_RESERVED_OUTPUT_TOKENS,
         }
 
-    # Check if using Gemini through its OpenAI-compatible API. Some utility
-    # paths call the generic gpt alias while the configured base URL is Gemini.
-    base_url = str(getattr(new_client, "base_url", ""))
-    is_gemini = model.startswith("gemini") or "generativelanguage.googleapis.com" in base_url
-    is_huggingface_router = "router.huggingface.co" in base_url
+    last_error = None
+    for attempt in range(CHAT_MAX_RETRY_TIMES):
+        budget = max(
+            CHAT_CONTEXT_MIN_INPUT_TOKENS,
+            int(
+                CHAT_CONTEXT_MAX_INPUT_TOKENS
+                * (CHAT_CONTEXT_RETRY_SHRINK_FACTOR ** attempt)
+            ),
+        )
+        request_messages, context_stats = build_context_window(
+            messages,
+            max_input_tokens=budget,
+        )
+        json_data = _request_payload(
+            request_messages,
+            model,
+            model_config_dict,
+            new_client,
+            CHAT_CONTEXT_RESERVED_OUTPUT_TOKENS,
+        )
+        logger.info(
+            "[Model Query Context] model=%s attempt=%s/%s stats=%s",
+            model,
+            attempt + 1,
+            CHAT_MAX_RETRY_TIMES,
+            context_stats,
+        )
+        logger.info("[Model Query] model=%s messages=%s", model, request_messages)
+        print(
+            "[Model Query] model={} input_tokens~{} output_tokens={} "
+            "total_tokens~{} budget={} messages={}/{}".format(
+                model,
+                context_stats["request_estimated_tokens"],
+                json_data["max_tokens"],
+                context_stats["request_estimated_tokens"] + json_data["max_tokens"],
+                budget,
+                context_stats["request_messages"],
+                context_stats["full_messages"],
+            )
+        )
+        try:
+            response = new_client.chat.completions.create(**json_data)
+            completion_tokens = response.usage.completion_tokens if response.usage else 0
+            prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+            total_tokens = response.usage.total_tokens if response.usage else 0
+            if total_tokens == 0:
+                total_tokens = prompt_tokens + completion_tokens
+            if total_tokens == 0:
+                total_tokens = estimate_text_tokens(
+                    response.choices[0].message.content
+                )
+            model_log_and_print(
+                "[Model Query] Token Usage: \nCompletion Tokens: {} "
+                "\nPrompt Tokens: {} \nTotal Tokens: {}".format(
+                    completion_tokens, prompt_tokens, total_tokens
+                )
+            )
+            return response, total_tokens
+        except Exception as error:
+            last_error = error
+            model_log_and_print(
+                "[Model Query: ChatCompletion] model={} attempt={}/{} "
+                "budget={} query failed: {}".format(
+                    model,
+                    attempt + 1,
+                    CHAT_MAX_RETRY_TIMES,
+                    budget,
+                    error,
+                )
+            )
+            if attempt + 1 < CHAT_MAX_RETRY_TIMES:
+                wait_seconds = min(
+                    CHAT_RETRY_WAIT_MAX,
+                    CHAT_RETRY_WAIT_MIN * (2 ** attempt),
+                )
+                time.sleep(wait_seconds)
 
-    if is_gemini or is_huggingface_router:
-        # Some OpenAI-compatible routers only support a subset of parameters.
-        json_data = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": min(model_config_dict.get("max_tokens", 4096), 4096),
-            "temperature": model_config_dict.get("temperature", 0.1),
-            "stream": False,
-        }
-    else:
-        json_data = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": min(model_config_dict.get("max_tokens", 4096), 4096),
-            "temperature": model_config_dict["temperature"],
-            "top_p": model_config_dict["top_p"],
-            "n": model_config_dict["n"],
-            "stream": model_config_dict["stream"],
-            "frequency_penalty": model_config_dict["frequency_penalty"],
-            "presence_penalty": model_config_dict["presence_penalty"],
-            "logit_bias": model_config_dict["logit_bias"],
-        }
-
-    try:
-        model_log_and_print("[Model Query] model={} messages={}".format(model, messages))
-        if APIConfig.SLOW_FLAG:
-            messages = truncate_messages(messages=messages)
-
-        response = new_client.chat.completions.create(**json_data)
-
-        completion_tokens = response.usage.completion_tokens if response.usage else 0
-        prompt_tokens = response.usage.prompt_tokens if response.usage else 0
-        total_tokens = response.usage.total_tokens if response.usage else 0
-        if total_tokens == 0:
-            total_tokens = prompt_tokens + completion_tokens
-        if total_tokens == 0:
-            total_tokens = int(len(response.choices[0].message.content)//1.8)
-        model_log_and_print(f"[Model Query] Token Usage: \nCompletion Tokens: {completion_tokens} \nPrompt Tokens: {prompt_tokens} \nTotal Tokens: {total_tokens}")
-        APIConfig.SLOW_FLAG = False
-        APIConfig.TRUNCATE_FACTOR = 0
-        return response, total_tokens   
-
-    except Exception as e:
-        print("Unable to generate ChatCompletion response. " + f"API calling Exception: {e}")
-        APIConfig.SLOW_FLAG = True
-        APIConfig.TRUNCATE_FACTOR += 1
-        model_log_and_print(f"[Model Query: ChatCompletion] model={model} query failed: {str(e)}")
-        raise Exception()
+    raise last_error

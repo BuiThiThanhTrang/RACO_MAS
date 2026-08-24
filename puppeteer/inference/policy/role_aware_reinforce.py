@@ -271,7 +271,7 @@ class RoleAwareREINFORCE(LearningPolicy):
         if self.training:
             first = distribution.sample()
         else:
-            first = torch.argmax(probs, dim=-1)
+            first = distribution.sample()
         first_index = int(first.item())
         stop_index = len(self.agent_hash_list)
         if allow_stop and first_index == stop_index:

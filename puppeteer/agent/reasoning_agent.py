@@ -1,5 +1,4 @@
 import json
-import yaml
 import os
 from tenacity import retry, stop_after_attempt, wait_exponential
 import re
@@ -14,14 +13,17 @@ from agent.agent import Agent
 from agent.agent_info.global_info import GlobalInfo
 from agent.agent_info.workflow import Action
 from agent.agent_info.actions import REASONING_ACTION_LIST, TOOL_ACTION_LIST, TERMINATION_ACTION_LIST
+from role_aware.schemas import TeammateSpec
 
-from utils.file_utils import format_code_with_prints, extract_code_from_text, write_code, write_text, read_code
+from utils.file_utils import prepare_python_code, extract_code_from_text, write_code, write_text, read_code
 
-global_config = yaml.safe_load(open("./config/global.yaml", "r"))
+
+PYTHON_GENERATION_ATTEMPTS = 3
+PYTHON_RUNTIME_REPAIR_ATTEMPTS = 2
 
 class Reasoning_Agent(Agent):
-    def __init__(self, role, role_prompt, index,  model="gpt", actions=[], policy=None, global_info=None,initial_dialog_history=None) -> None:
-        super().__init__(role, role_prompt, index, model, actions, policy, global_info, initial_dialog_history)
+    def __init__(self, spec: TeammateSpec, index, runtime_config=None, policy=None, global_info=None, initial_dialog_history=None) -> None:
+        super().__init__(spec, index, runtime_config, policy, global_info, initial_dialog_history)
 
 
     def activate(self, global_info:GlobalInfo, initial_dialog_history=None):
@@ -105,12 +107,15 @@ class Reasoning_Agent(Agent):
     def _execute_action(self, format_action, global_info):
         answer = ""
         total_tokens = 0
+        step_data = ""
+        flag = False
         print("\033[1;33mAgent {} Execute Action: {}\033[0m".format(self.role, format_action.get("action")))
         code_generated_type = True if global_info.task.get("req")=="code" else False
         text_generated_type = True if global_info.task.get("req")=="text" else False
         
         if format_action.get("action") not in REASONING_ACTION_LIST and format_action.get("action") is not None:
-            flag, step_data = self._tool_operation(format_action, global_info)
+            flag, step_data, tool_tokens = self._tool_operation(format_action, global_info)
+            total_tokens += tool_tokens
             step_data = self._compress_data(step_data)
             print("\033[1;33m{} {}\033[0m".format(format_action.get("action"),"Success" if flag else "Failure"))
             
@@ -131,7 +136,8 @@ class Reasoning_Agent(Agent):
             if flag or code_generated_type:
                 tool_result = {"role": "user", "content": "You have get results from {}: {}".format(format_action.get("action"), step_data)}
                 self.dialog_history.append(tool_result)
-                answer, total_tokens = self._answer_operation(global_info)
+                answer, answer_tokens = self._answer_operation(global_info)
+                total_tokens += answer_tokens
                 print("\033[1;33mAgent {} answered: {}\033[0m".format(self.role, answer))
     
         if format_action.get("action") in REASONING_ACTION_LIST:
@@ -189,16 +195,29 @@ class Reasoning_Agent(Agent):
             elif text_generated_type:
                 prompt = "Your previous text {}".format(read_code(global_info.code_path)) + prompt
 
-            response, tokens = self._query(prompt)
-            total_tokens += tokens
-            action_json = self.json_format.json_reformat(response, global_config.get("max_json_reformat_turns"))
-
-            if not isinstance(action_json, dict):
-                action_json = {"action": self.actions[0], "parameter": ""}
+            if self.actions[0] == "run_python":
+                code, tokens, validation_error = self._request_python_code(prompt)
+                total_tokens += tokens
+                action_json = {"action": "run_python", "parameter": code}
+                if validation_error:
+                    logger.info("[Run Python Generation Failure] %s", validation_error)
+                message = {
+                    "role": "assistant",
+                    "content": f"```python\n{code}\n```" if code else validation_error,
+                }
             else:
-                action_json["action"] = self.actions[0]
-                
-            message = {"role": "assistant", "content": str(action_json)}
+                response, tokens = self._query(prompt)
+                total_tokens += tokens
+                action_json = self.json_format.json_reformat(
+                    response,
+                    self.runtime_config.get("max_json_reformat_turns", 3),
+                )
+                if not isinstance(action_json, dict):
+                    action_json = {"action": self.actions[0], "parameter": ""}
+                else:
+                    action_json["action"] = self.actions[0]
+                message = {"role": "assistant", "content": str(action_json)}
+
             self.dialog_history[-1] = message
             logger.info("[Action] {}\n".format(action_json))
         
@@ -325,7 +344,6 @@ class Reasoning_Agent(Agent):
                 logger.info("[Error] No final answer found in the response: {}\n".format(raw_response))
                 return "", total_tokens
 
-    @retry(wait=wait_exponential(min=3, max=5), stop=stop_after_attempt(2))
     def _query(self, query) -> str:
         prompt = {"role": "user", "content": str(query)}
         if self.dialog_history[-1] != prompt and self.dialog_history[-1]['role'] != 'user':
@@ -334,42 +352,90 @@ class Reasoning_Agent(Agent):
             self.dialog_history[-1]['content'] += str(query)
         self.last_prompt = prompt['content']
         messages = list(self.dialog_history)
-        response = self.query_func(messages)
-        message = {"role": "assistant", "content": str(response)}
+        response_text, total_tokens = self.query_func(messages)
+        message = {"role": "assistant", "content": response_text}
         self.dialog_history.append(dict(message))
-        return response
+        return response_text, total_tokens
+
+    def _request_python_code(self, prompt, max_attempts=PYTHON_GENERATION_ATTEMPTS):
+        """Generate syntactically valid Python without an LLM JSON-reformat pass."""
+        total_tokens = 0
+        query = prompt
+        last_error = "The response did not contain valid Python code."
+        for _ in range(max_attempts):
+            response, tokens = self._query(query)
+            total_tokens += tokens
+            code, error = prepare_python_code(response)
+            if code:
+                return code, total_tokens, ""
+            last_error = error
+            query = (
+                "Your previous response is not executable Python. "
+                f"Parser error: {error}\n"
+                "Return only one corrected ```python fenced code block. "
+                "Do not return JSON or explanatory prose."
+            )
+        return "", total_tokens, last_error
 
     def _tool_operation(self, action:json, global_info) ->str:
-        logger = global_info.logger 
+        logger = global_info.logger
         name = action.get("action")
         parameter = action.get("parameter")
+        total_tokens = 0
         logger.info("[Action Execution] {}({})\n".format(name, parameter))
-        if 1:
-            if name == "read_file":
-                file_path = os.path.join(self.root_file_path, str(parameter))
-                flag, step_data = global_tool_registry.execute_tool(name, file_path=file_path, file_extension=global_info.file_extension)
-                logger.info("[Read File] {}: {}".format(("Success"if flag else "Failure"), step_data))
-            elif name == "run_python":
-                if global_info.task.get("type") != "SRDD" or global_info.task.get("type") != "human-eval":
-                    parameter = format_code_with_prints(parameter)
-                    timeout_detected = True
-                else:
-                    timeout_detected = False
-                
-                if global_info.file_name is not None:
-                    file_path = os.path.join(self.root_file_path, global_info.file_name )
-                else: 
-                    file_path = ""
-                flag, step_data = global_tool_registry.execute_tool(name, work_path=self.workspace_path, code=parameter, file_path=file_path, timeout_detected=timeout_detected)
-                logger.info("[Run Python] {}: {}".format(("Success"if flag else "Failure"), step_data))
-            else:
-                flag, step_data = global_tool_registry.execute_tool(name, query=parameter, work_path=self.workspace_path)
-                logger.info("[Web Broswing] {}: {}".format(("Success"if flag else "Failure"), step_data))
-            return flag, step_data
-        else:
+        if name not in self.tools:
             logger.info("Tool {} not registered for agent {}".format(name, self.role))
             print("Tool {} not registered for agent {}".format(name, self.role))
-            return None, None   
+            return False, "Tool is not registered", total_tokens
+
+        if name == "read_file":
+            file_path = os.path.join(self.root_file_path, str(parameter))
+            flag, step_data = global_tool_registry.execute_tool(
+                name, file_path=file_path, file_extension=global_info.file_extension)
+            logger.info("[Read File] {}: {}".format("Success" if flag else "Failure", step_data))
+            return flag, step_data, total_tokens
+
+        if name == "run_python":
+            parameter, validation_error = prepare_python_code(parameter)
+            if not parameter:
+                step_data = f"Invalid Python code: {validation_error}"
+                logger.info("[Run Python] Failure: %s", step_data)
+                return False, step_data, total_tokens
+
+            action["parameter"] = parameter
+            timeout_detected = global_info.task.get("type") not in ("SRDD", "human-eval")
+            file_path = (os.path.join(self.root_file_path, global_info.file_name)
+                         if global_info.file_name is not None else "")
+            flag, step_data = global_tool_registry.execute_tool(
+                name, work_path=self.workspace_path, code=parameter,
+                file_path=file_path, timeout_detected=timeout_detected)
+            for _ in range(PYTHON_RUNTIME_REPAIR_ATTEMPTS):
+                if flag:
+                    break
+                repair_prompt = (
+                    "The Python program below failed at runtime. Fix the program using the error output.\n\n"
+                    f"Program:\n```python\n{parameter}\n```\n\n"
+                    f"Error output:\n{step_data}\n\n"
+                    "Return only one corrected ```python fenced code block. "
+                    "Do not return JSON or explanatory prose.")
+                repaired, tokens, repair_error = self._request_python_code(
+                    repair_prompt, max_attempts=2)
+                total_tokens += tokens
+                if not repaired:
+                    step_data = f"Python repair failed validation: {repair_error}"
+                    break
+                parameter = repaired
+                action["parameter"] = parameter
+                flag, step_data = global_tool_registry.execute_tool(
+                    name, work_path=self.workspace_path, code=parameter,
+                    file_path=file_path, timeout_detected=timeout_detected)
+            logger.info("[Run Python] {}: {}".format("Success" if flag else "Failure", step_data))
+            return flag, step_data, total_tokens
+
+        flag, step_data = global_tool_registry.execute_tool(
+            name, query=parameter, work_path=self.workspace_path)
+        logger.info("[Web Browsing] {}: {}".format("Success" if flag else "Failure", step_data))
+        return flag, step_data, total_tokens
 
     def _interaction_operation(self, code, env, global_info) -> str:
         pass 

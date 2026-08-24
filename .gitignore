@@ -190,8 +190,22 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
-# Puppeteer local API caches
-puppeteer/cache/
+# JavaScript dependencies
+node_modules/
+
+# Local editor settings
+.vscode/
+
+# Generated runtime and experiment artifacts
+/WareHouse/
+/logs/
+/output/
+/puppeteer/cache/
+/puppeteer/checkpoint/
+/puppeteer/logs/
+/puppeteer/results/
+/puppeteer/runs/
+/puppeteer/docs/run.txt
 
 # PyPI configuration file
 .pypirc
@@ -210,8 +224,11 @@ __marimo__/
 
 yaml_instance/
 
-puppeteer\logs
+tmp/
 
-tmp
+/data/
 
-data/
+# Keep deterministic split manifests, but ignore downloaded/raw task data.
+/puppeteer/data/*
+!/puppeteer/data/splits/
+!/puppeteer/data/splits/**

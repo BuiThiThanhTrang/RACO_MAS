@@ -1,50 +1,48 @@
 import json
-import yaml
-import hashlib
 import re
-import time
 from utils.other_utils import JsonFormat
 from copy import deepcopy
 from abc import ABC, abstractmethod
 from model.query_manager import query_manager
 from agent.agent_info.global_info import GlobalInfo
-
-global_config = yaml.safe_load(open("./config/global.yaml", "r"))
+from role_aware.schemas import TeammateSpec
 
 class Agent(ABC):
-    def __init__(self, role, role_prompt, index, model="gpt",  actions=[], policy=None, global_info:GlobalInfo =None, initial_dialog_history=None) -> None:
+    def __init__(self, spec: TeammateSpec, index, runtime_config=None, policy=None, global_info:GlobalInfo =None, initial_dialog_history=None) -> None:
         """
         Initialize the Agent object.
-        :param role: The name of the agent's role
-        :param role_prompt: The role prompt information
+        :param spec: Internal teammate definition. Only its RoleCard is exposed to routing.
         :param index: The index to distinguish different agent instances
         :param global_info: Global configuration info, default is None
-        :param model: The model to be used (either 'gpt' or 'gpt4'), default is 'gpt'
-        :param actions: List of actions available to the agent, default is empty
         :param initial_dialog_history: Initial dialog history, default is None
         """
         super().__init__()
+        self.runtime_config = deepcopy(runtime_config or {})
 
         # Initialize model query function
-        self.model = model
+        self.spec = spec
+        self.teammate_id = spec.teammate_id
+        self.role_card = spec.role_card
+        self.model = spec.backbone
         self.query_func = None
         self.query_func = self._get_query_function()
         
         if not self.query_func:
-            raise ValueError(f"Model '{model}' not implemented")
+            raise ValueError(f"Model '{self.model}' not implemented")
         
         # Other basic settings
         self.json_format = JsonFormat(query_func=self.query_func)
-        self.role = role
-        self.role_prompt = role_prompt
+        self.role = self.role_card.role_name
+        self.role_prompt = self.role_card.to_prompt()
         self.system_prompt = self.role_prompt  # Initial system prompt
         self.policy = policy
         self.index = index
-        self.hash = hashlib.md5(f"{index}{role}{role_prompt}{model}{time.ctime()}".encode()).hexdigest()
+        self.hash = self.teammate_id
 
         # Tools and file path settings
-        self.actions = actions
-        self.root_file_path = global_config["file_path"]["root_file_path"]
+        self.actions = list(self.role_card.allowed_actions)
+        self.tools = list(self.role_card.tools)
+        self.root_file_path = self.runtime_config.get("file_path", {}).get("root_file_path", ".")
         if global_info:
             self.workspace_path = global_info.workpath
         

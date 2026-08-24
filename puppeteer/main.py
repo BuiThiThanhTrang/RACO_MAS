@@ -1,8 +1,14 @@
 import argparse
+import copy
 import os
-import json
-import yaml
 import random
+from dataclasses import replace
+from pathlib import Path
+
+import yaml
+
+from config.runtime import load_experiment_config
+
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(PROJECT_DIR)
@@ -12,11 +18,13 @@ def set_seed(seed):
     random.seed(seed)
     try:
         import numpy as np
+
         np.random.seed(seed)
     except Exception:
         pass
     try:
         import torch
+
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -24,112 +32,289 @@ def set_seed(seed):
         pass
 
 
+def _deep_merge(base, override):
+    merged = copy.deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _resolve_policy_config(experiment, task, dataset_mode, policy_mode, checkpoint, seed):
+    config = copy.deepcopy(dict(experiment.policy))
+    config["dataset_name"] = task
+    config["dataset_mode"] = dataset_mode
+    config["policy_mode"] = policy_mode
+    config["seed"] = seed
+
+    if policy_mode == "train" and dataset_mode != "train":
+        raise ValueError(
+            "policy_mode=train is only valid with dataset_mode=train; "
+            "use initialized or evolved for evaluation"
+        )
+    if policy_mode == "evolved" and checkpoint is None:
+        raise ValueError("policy_mode=evolved requires an explicit checkpoint")
+    if dataset_mode == "final" and policy_mode != "evolved":
+        raise ValueError("dataset_mode=final requires policy_mode=evolved")
+    if checkpoint is not None and not Path(checkpoint).is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
+
+    paths = config.setdefault("paths", {})
+    training = config.setdefault("training", {})
+    paths["checkpoint_path"] = str(Path(experiment.output_dir) / experiment.run_id / "checkpoints")
+    paths["model_path"] = None
+    paths["load_policy"] = False
+    training["loading"] = False
+    training["training"] = bool(
+        dataset_mode == "train" and policy_mode == "train"
+    )
+    if policy_mode not in {"initialized", "evolved", "train"}:
+        raise ValueError(f"Unknown policy mode: {policy_mode}")
+    return config
+
+def _resolve_profile_initialization(
+    experiment, build_source=None, source_override=None, path_override=None
+):
+    initialization = experiment.profiles.initialization
+    configured_source = str(initialization.source)
+    configured_path = initialization.path
+
+    if build_source is not None:
+        source = str(build_source)
+        if path_override is not None:
+            return source, path_override
+        if source == "probe":
+            path = configured_path if configured_source == "probe" else None
+            return source, path
+        if configured_path is None:
+            return source, None
+        configured = Path(configured_path)
+        reference_name = configured.name.replace(
+            "_probe_profiles", "_reference_profiles"
+        )
+        if reference_name == configured.name:
+            reference_name = (
+                f"{configured.stem}_reference_profiles{configured.suffix}"
+            )
+        return source, str(configured.with_name(reference_name))
+
+    source = str(source_override or configured_source)
+    if source == "priors":
+        if path_override is not None:
+            raise ValueError("--profile_path cannot be used with profile priors")
+        return source, None
+    if path_override is not None:
+        return source, path_override
+    if source == configured_source:
+        return source, configured_path
+    raise ValueError(
+        f"--profile_source {source} requires an explicit --profile_path"
+    )
+
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Run benchmark tasks")
-    parser.add_argument("task", choices=["MMLU-Pro", "gsm-hard", "SRDD", "CW"])
-    parser.add_argument("mode", choices=["validation", "test"])
+    parser = argparse.ArgumentParser(description="Run role-aware benchmark tasks")
+    parser.add_argument("task", nargs="?", choices=["MMLU-Pro", "gsm-hard", "SRDD", "CW"])
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        choices=["train", "dev", "reference", "probe", "final", "validation", "test"],
+    )
+    parser.add_argument(
+        "--config",
+        default="config/experiments/role_aware_gsm.yaml",
+        help="Per-run experiment config. The source file is never modified.",
+    )
     parser.add_argument("--level", type=int, default=1)
     parser.add_argument("--index", type=int, default=-1)
-    parser.add_argument("--data_limit", type=int, default=1)
-    parser.add_argument(
-        "--data_start",
-        type=int,
-        default=0,
-        help="Start offset after deterministic dataset shuffling. Useful for quota-limited batch runs.",
-    )
-    parser.add_argument(
-        "--result_suffix",
-        type=str,
-        default=None,
-        help="Optional suffix for result files, e.g. day1 or start0_limit500.",
-    )
-    parser.add_argument("--personas", type=str, default="personas/personas.jsonl")
+    parser.add_argument("--data_limit", type=int, default=None)
+    parser.add_argument("--data_start", type=int, default=None)
+    parser.add_argument("--result_suffix", type=str, default=None)
+    parser.add_argument("--personas", type=str, default=None)
     parser.add_argument(
         "--policy_mode",
         choices=["initialized", "evolved", "train"],
-        default="evolved",
-        help=(
-            "initialized: run the freshly initialized policy without loading a checkpoint; "
-            "evolved: load an evolved policy checkpoint for evaluation; "
-            "train: evolve/train the policy."
-        ),
+        default=None,
+    )
+    parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--build_reference_profiles",
+        action="store_true",
+        help="Run each available teammate on the configured fixed reference subset.",
     )
     parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default=None,
-        help="Optional policy checkpoint path used by --policy_mode evolved or train resume.",
+        "--build_probe_profiles",
+        action="store_true",
+        help="Run each available teammate on all 10 items in the probe split.",
     )
-    parser.add_argument("--seed", type=int, default=42)
-
+    parser.add_argument(
+        "--profile_source",
+        choices=["probe", "reference", "priors"],
+        default=None,
+    )
+    parser.add_argument("--profile_path", type=str, default=None)
     args = parser.parse_args()
-    set_seed(args.seed)
+    if args.build_probe_profiles and args.build_reference_profiles:
+        parser.error("Choose only one profile-building mode")
+    profile_build_source = (
+        "probe"
+        if args.build_probe_profiles
+        else "reference" if args.build_reference_profiles else None
+    )
+    if profile_build_source is not None and args.checkpoint is not None:
+        parser.error("Profile building cannot resume from a run checkpoint")
 
-    from tasks.runner import BenchmarkRunner
+    experiment = load_experiment_config(args.config)
+    task = args.task or experiment.dataset.name
+    dataset_mode = args.mode or experiment.dataset.mode
+    data_limit = args.data_limit if args.data_limit is not None else experiment.dataset.data_limit
+    data_start = args.data_start if args.data_start is not None else experiment.dataset.data_start
+    personas_path = args.personas or experiment.personas_path
+    seed = args.seed if args.seed is not None else experiment.seed
+    policy_mode = args.policy_mode or str(experiment.policy.get("policy_mode", experiment.mode))
+    if profile_build_source is not None:
+        dataset_mode = profile_build_source
+        policy_mode = "initialized"
+    if args.checkpoint is not None and policy_mode == "train":
+        checkpoint_path = Path(args.checkpoint).resolve()
+        checkpoint_run_dir = checkpoint_path.parent.parent
+        experiment = replace(
+            experiment,
+            output_dir=str(checkpoint_run_dir.parent),
+            run_id=checkpoint_run_dir.name,
+        )
+    try:
+        profile_source, profile_path = _resolve_profile_initialization(
+            experiment,
+            build_source=profile_build_source,
+            source_override=args.profile_source,
+            path_override=args.profile_path,
+        )
+    except ValueError as error:
+        parser.error(str(error))
+
+    effective_dataset = replace(
+        experiment.dataset,
+        name=task,
+        mode=dataset_mode,
+        data_limit=data_limit,
+        data_start=data_start,
+    )
+    policy_config = _resolve_policy_config(
+        experiment,
+        task,
+        dataset_mode,
+        policy_mode,
+        args.checkpoint,
+        seed,
+    )
+    effective_initialization = replace(
+        experiment.profiles.initialization,
+        source=profile_source,
+        path=profile_path,
+    )
+    effective_profiles = replace(
+        experiment.profiles, initialization=effective_initialization
+    )
+    experiment = replace(
+        experiment,
+        seed=seed,
+        personas_path=personas_path,
+        dataset=effective_dataset,
+        policy=policy_config,
+        profiles=effective_profiles,
+    )
+    set_seed(seed)
+
     from tasks.evaluator import BenchmarkEvaluator
+    from tasks.runner import BenchmarkRunner
 
-    if args.task == "MMLU-Pro":
+    if task == "MMLU-Pro":
         from tasks import mmlu_pro as task_module
-    elif args.task == "gsm-hard":
+    elif task == "gsm-hard":
         from tasks import gsm_hard as task_module
-    elif args.task == "SRDD":
+    elif task == "SRDD":
         from tasks import srdd as task_module
-    elif args.task == "CW":
+    elif task == "CW":
         from tasks import creative_writing as task_module
     else:
-        raise ValueError(f"Unknown task: {args.task}")
+        raise ValueError(f"Unknown task: {task}")
 
-    # load global config
-    with open("config/global.yaml", "r") as f:
-        global_config = yaml.safe_load(f)
+    with open("config/global.yaml", "r", encoding="utf-8") as source:
+        global_config = _deep_merge(yaml.safe_load(source), experiment.global_config)
+    experiment = replace(
+        experiment,
+        global_config=copy.deepcopy(global_config),
+    )
 
-    runner = BenchmarkRunner(args.personas, global_config)
+    run_dir = Path(experiment.output_dir) / experiment.run_id
+    results_dir = run_dir / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    runner = BenchmarkRunner(
+        experiment.personas_path,
+        global_config,
+        policy_config=experiment.policy,
+        tool_policy=experiment.tools,
+        profile_config=experiment.profiles,
+        checkpoint_config=experiment.checkpoint,
+        run_dir=run_dir,
+        dataset_name=task,
+        dataset_mode=dataset_mode,
+        seed=seed,
+        checkpoint_path=args.checkpoint,
+        profile_path=profile_path,
+        profile_source=profile_source,
+        profile_build_mode=profile_build_source is not None,
+        probe_items_per_teammate=experiment.dataset.probe_items_per_teammate,
+        reference_items_per_teammate=experiment.dataset.reference_items_per_teammate,
+    )
     evaluator = BenchmarkEvaluator()
 
-    results_dir = os.path.join(os.getcwd(), "results", f"{args.task}_{args.mode}_{args.policy_mode}")
-    os.makedirs(results_dir, exist_ok=True)
+    experiment.write_snapshot()
 
-    # change policy.json
-    config_path = "config/policy.json"
-    with open(config_path, 'r') as f:
-        config = json.load(f)
-    config["dataset_name"] = args.task
-    config["dataset_mode"] = args.mode
-    config["policy_mode"] = args.policy_mode
-    config["seed"] = args.seed
-    config['paths']["checkpoint_path"] = f"checkpoint/{args.task}_{args.mode}_{args.policy_mode}"
-    if args.checkpoint is not None:
-        config['paths']["model_path"] = args.checkpoint
+    if profile_build_source is not None:
+        from tasks.reference_profile import run_probe_profiles, run_reference_profiles
 
-    if args.policy_mode == "initialized":
-        config["training"]["training"] = False
-        config["training"]["loading"] = False
-        config["paths"]["load_policy"] = False
-    elif args.policy_mode == "evolved":
-        config["training"]["training"] = False
-        config["training"]["loading"] = True
-        config["paths"]["load_policy"] = True
-    elif args.policy_mode == "train":
-        config["training"]["training"] = True
-        config["training"]["loading"] = args.checkpoint is not None
-        config["paths"]["load_policy"] = args.checkpoint is not None
-
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=4)
-
-    if args.task == "gsm-hard":
-        task_module.run(
-            runner,
-            evaluator,
-            results_dir,
-            args.mode,
-            args.data_limit,
-            data_start=args.data_start,
-            seed=args.seed,
-            result_suffix=args.result_suffix,
+        builder = (
+            run_probe_profiles
+            if profile_build_source == "probe"
+            else run_reference_profiles
         )
-    else:
-        task_module.run(runner, evaluator, results_dir, args.mode, args.data_limit)
+        count = (
+            experiment.dataset.probe_items_per_teammate
+            if profile_build_source == "probe"
+            else experiment.dataset.reference_items_per_teammate
+        )
+        builder(
+            runner=runner,
+            task_name=task,
+            task_module=task_module,
+            run_dir=run_dir,
+            count=count,
+            seed=seed,
+            profile_path=profile_path,
+        )
+        return
+
+    run_kwargs = {
+        "data_start": data_start,
+        "seed": seed,
+    }
+    if task == "gsm-hard":
+        run_kwargs["result_suffix"] = args.result_suffix
+    task_module.run(
+        runner,
+        evaluator,
+        str(results_dir),
+        dataset_mode,
+        data_limit,
+        **run_kwargs,
+    )
+
 
 if __name__ == "__main__":
     main()

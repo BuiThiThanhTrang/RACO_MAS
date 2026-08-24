@@ -1,12 +1,10 @@
 from enum import Enum
-import yaml
 import uuid
-from agent.register.register import agent_global_registry
 from inference.graph.action_graph import ActionGraph
 import os
 import copy
 from agent.agent_info.global_info import GlobalInfo
-global_config = yaml.safe_load(open("./config/global.yaml", "r"))
+from inference.policy.role_aware_reinforce import ORCHESTRATOR_STOP
 class ReasoningState(Enum):
     INITIALIZED = 1
     SPLITING = 2
@@ -16,14 +14,15 @@ class ReasoningState(Enum):
     AGGREGATING = 6
 
 class GraphReasoningPath:
-    def __init__(self, start_agent, max_parallel_paths, global_logger, workspace_path, action_graph:ActionGraph, frontier=[], agent_sequence = [],  index = None, global_info:GlobalInfo=None, state = ReasoningState.INITIALIZED, env=None, env_name=None, policy=None):
+    def __init__(self, start_agent, max_parallel_paths, global_logger, workspace_path, action_graph:ActionGraph, registry, frontier=None, agent_sequence=None, index=None, global_info:GlobalInfo=None, state=ReasoningState.INITIALIZED, env=None, env_name=None, policy=None, max_step_num=None, external_tools_enabled=False, role_adherence=None):
         
         self.state = state
         self.index = index
         self.global_logger = global_logger
         self.workspace_path = workspace_path
         self.action_graph = action_graph
-        self.frontier = frontier
+        self.registry = registry
+        self.frontier = list(frontier or [])
         
         global_logger.create_logger('path{}_logger'.format(index), os.path.join(global_logger.folder_path, "path{}.log".format(index)), "INFO")
         self.logger = global_logger.get_logger('path{}_logger'.format(index))
@@ -31,12 +30,14 @@ class GraphReasoningPath:
         self.workcode_path = os.path.join(workspace_path, "code_{}.py".format(index))
 
         self.start_agent = start_agent
-        self.agent_sequence = agent_sequence
+        self.agent_sequence = list(agent_sequence or [])
+        self.role_adherence = dict(role_adherence or {})
         if self.agent_sequence == []:
             self.agent_sequence.append(start_agent.unique_identifier)
         
         self.max_parallel_paths = max_parallel_paths
-        self.max_step_num = global_config.get("graph").get("max_step_num")
+        self.max_step_num = max_step_num
+        self.external_tools_enabled = external_tools_enabled
         
         self.current_agent = start_agent
         self.next_agents = []
@@ -61,11 +62,24 @@ class GraphReasoningPath:
         self.logger.info("Updated global_info: {}".format(self.global_info.__dict__))
 
     def step(self):
-        external_tools_enabled = global_config.get("external_tools_enabled")
-        current_action, terminated = self.current_agent.take_action(self.global_info, external_tools_enabled, self.env, self.env_name)
+        current_action, terminated = self.current_agent.take_action(self.global_info, self.external_tools_enabled, self.env, self.env_name)
         self.current_agent.deactivate()
         self.update_global_info(current_action)
-        
+        action_name = current_action.action.get("action")
+        card = self.current_agent.role_card
+        adhered = (
+            action_name in card.allowed_actions
+            and action_name not in card.forbidden_actions
+            and (
+                action_name not in card.tools
+                or (self.external_tools_enabled and action_name in card.tools)
+            )
+        )
+        teammate_id = self.current_agent.hash
+        self.role_adherence[teammate_id] = (
+            self.role_adherence.get(teammate_id, True) and adhered
+        )
+
         node_id = str(uuid.uuid4())
         self.action_graph.add_action(node_id, current_action.to_dict(), self.current_agent.role) 
         for successor in self.frontier:
@@ -83,7 +97,20 @@ class GraphReasoningPath:
         
         # Deal with the case where the current agent is the terminator
         next_agents_idx = self.policy.forward(self.global_info)
-        self.next_agents = [agent_global_registry.get_agent_from_idx(idx) for idx in next_agents_idx]
+        if ORCHESTRATOR_STOP in next_agents_idx:
+            self.state = ReasoningState.FINALIZING
+            self.last_agent = self.current_agent
+            self.last_query_func = self.current_agent.query_func
+            return self.state
+        self.next_agents = [
+            self.registry.get_agent_from_idx(idx) for idx in next_agents_idx
+        ]
+        self.next_agents = [agent for agent in self.next_agents if agent is not None]
+        if not self.next_agents:
+            self.state = ReasoningState.FINALIZING
+            self.last_agent = self.current_agent
+            self.last_query_func = self.current_agent.query_func
+            return self.state
         
         # Deal with the case where there is only one next agent
         if len(self.next_agents) == 1:
@@ -120,6 +147,7 @@ class GraphReasoningPath:
                                     start_agent=agent, 
                                     max_parallel_paths=self.max_parallel_paths, 
                                     action_graph=self.action_graph,
+                                    registry=self.registry,
                                     agent_sequence = agent_sequence,
                                     index=path_index,
                                     global_info=copy.deepcopy(self.global_info),
@@ -128,7 +156,10 @@ class GraphReasoningPath:
                                     workspace_path=self.workspace_path,
                                     env=env,
                                     frontier=self.frontier,
-                                    policy=self.policy
+                                    policy=self.policy,
+                                    max_step_num=self.max_step_num,
+                                    external_tools_enabled=self.external_tools_enabled,
+                                    role_adherence=copy.deepcopy(self.role_adherence),
                                     )
             reasoning_path.agent_sequence.append(agent.unique_identifier)
             reasoning_path.current_agent = agent

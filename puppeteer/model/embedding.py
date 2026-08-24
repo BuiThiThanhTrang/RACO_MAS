@@ -90,8 +90,8 @@ class APIEmbeddingStateRepresentation:
         "text-embedding-ada-002": 1536,
     }
 
-    def __init__(self):
-        state_config = GLOBAL_CONFIG.get("state_representation", {}) or {}
+    def __init__(self, state_config=None):
+        state_config = dict(state_config or GLOBAL_CONFIG.get("state_representation", {}) or {})
         cache_config = state_config.get("cache", {}) or {}
 
         self.provider = state_config.get("provider", "openai")
@@ -221,7 +221,10 @@ class APIEmbeddingStateRepresentation:
         return self._dim
 
 class RewardModelTokenRepresentation():
-    def __init__(self):
+    def __init__(self, model_weight_path=None, reward_model_config=None):
+        model_weight_path = model_weight_path or MODEL_WEIGHT_PATH
+        reward_model_config = dict(reward_model_config or REWARD_MODEL_CONFIG)
+
         try:
             from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
         except ImportError as e:
@@ -230,15 +233,15 @@ class RewardModelTokenRepresentation():
                 "Run: pip install -r requirements.txt"
             ) from e
 
-        if not MODEL_WEIGHT_PATH:
+        if not model_weight_path:
             raise ValueError("model_weight_path is required for RewardModelTokenRepresentation.")
 
-        self.model_name = MODEL_WEIGHT_PATH
-        self.device_map = REWARD_MODEL_CONFIG.get("device_map", "auto")
-        self.max_length = int(REWARD_MODEL_CONFIG.get("max_length", 4096))
-        self.max_chars = int(REWARD_MODEL_CONFIG.get("max_chars", 12000))
-        self.torch_dtype = self._resolve_torch_dtype(REWARD_MODEL_CONFIG.get("torch_dtype", "auto"))
-        self.model_config = AutoConfig.from_pretrained(MODEL_WEIGHT_PATH, trust_remote_code=True)
+        self.model_name = model_weight_path
+        self.device_map = reward_model_config.get("device_map", "auto")
+        self.max_length = int(reward_model_config.get("max_length", 4096))
+        self.max_chars = int(reward_model_config.get("max_chars", 12000))
+        self.torch_dtype = self._resolve_torch_dtype(reward_model_config.get("torch_dtype", "auto"))
+        self.model_config = AutoConfig.from_pretrained(model_weight_path, trust_remote_code=True)
         self._dim = int(getattr(self.model_config, "hidden_size", 8192))
 
         load_kwargs = {
@@ -246,18 +249,18 @@ class RewardModelTokenRepresentation():
             "device_map": self.device_map,
             "trust_remote_code": True,
         }
-        quantization = str(REWARD_MODEL_CONFIG.get("quantization", "none")).lower()
+        quantization = str(reward_model_config.get("quantization", "none")).lower()
         if quantization in {"8bit", "int8"}:
             load_kwargs["load_in_8bit"] = True
         elif quantization in {"4bit", "nf4"}:
             load_kwargs["load_in_4bit"] = True
 
-        self.model = AutoModelForCausalLM.from_pretrained(MODEL_WEIGHT_PATH, **load_kwargs)
+        self.model = AutoModelForCausalLM.from_pretrained(model_weight_path, **load_kwargs)
         self.model.eval()
-        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_WEIGHT_PATH, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_weight_path, trust_remote_code=True)
         self.input_device = self._resolve_input_device()
         model_log_and_print(
-            f"[Reward Model] Loaded {MODEL_WEIGHT_PATH} with dtype={self.torch_dtype}, "
+            f"[Reward Model] Loaded {model_weight_path} with dtype={self.torch_dtype}, "
             f"device_map={self.device_map}, input_device={self.input_device}, hidden_size={self._dim}"
         )
 

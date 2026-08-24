@@ -1,41 +1,53 @@
+import json
 import os
 import string
-import json
+
 import pandas as pd
 from tqdm import tqdm
-from tasks.base.base_task import BaseTask
 
-def load_dataset(mode, data_limit=None):
-    path = os.path.join("data", "MMLU-Pro", f"{mode}.parquet")
+from tasks.splits import load_split_indices
+from tasks.progress import (
+    complete_item,
+    finalize_run,
+    register_result_path,
+    resolve_data_window,
+)
+
+def load_dataset(mode, data_limit=None, seed=42, data_start=0):
+    path = os.path.join("data", "MMLU-Pro", "test.parquet")
     data = pd.read_parquet(path)
-    return data[:data_limit] if data_limit else data
+    data = data.iloc[load_split_indices("mmlu_pro", mode, seed=seed)].reset_index(drop=True)
+    data = data.iloc[data_start:]
+    if data_limit is not None:
+        data = data.iloc[:data_limit]
+    return data.reset_index(drop=True)
 
 def format_question(task):
-    options = [f"{letter}: {op}" for letter, op in zip(string.ascii_uppercase, task["options"])]
-    prompt = f"The following are multiple choice questions (with answers) about {task['category']}."
-    question = prompt + "\n" + task["question"] + "\n" + " ".join(options)
+    options = [f"{letter}: {option}" for letter, option in zip(string.ascii_uppercase, task["options"])]
     return {
         "type": "MMLU-Pro",
-        "Question": question,
+        "Question": f"Answer this multiple-choice question about {task['category']}.\n{task['question']}\n" + " ".join(options),
         "Answer": task["answer"],
-        "id": task["question_id"]
+        "id": task["question_id"],
     }
 
-def run(runner, evaluator, results_dir, mode, data_limit=None):
-    dataset = load_dataset(mode, data_limit)
+def run(runner, evaluator, results_dir, mode, data_limit=None, data_start=0, seed=42):
+    effective_start, effective_limit = resolve_data_window(
+        runner, data_start, data_limit
+    )
+    dataset = load_dataset(
+        mode, effective_limit, seed=seed, data_start=effective_start
+    )
     result_path = os.path.join(results_dir, f"MMLU-Pro_{mode}.jsonl")
-    acc = 0
-
-    with open(result_path, "w", encoding="utf-8") as fd:
-        for _, row in tqdm(dataset.iterrows(), total=len(dataset)):
+    file_mode = register_result_path(runner, result_path)
+    with open(result_path, file_mode, encoding="utf-8") as fd:
+        for idx, (_, row) in enumerate(tqdm(dataset.iterrows(), total=len(dataset))):
+            absolute_offset = effective_start + idx
             task = format_question(row)
-            final_ans = runner.run_reasoning(task)
-            flag = evaluator.check_mmlu(final_ans, task["Answer"])
-            if flag: 
-                acc += 1
-            record = {
-            "id": task["id"],
-            "pred": final_ans,
-            "correct": flag
-            }
-            fd.write(json.dumps(record, ensure_ascii=False) + "\n")
+            prediction = runner.run_reasoning(task)
+            success = evaluator.check_mmlu(prediction, task["Answer"])
+            fd.write(json.dumps({"id": task["id"], "pred": prediction, "answer": task["Answer"], "correct": success}, ensure_ascii=False) + "\n")
+            fd.flush()
+            os.fsync(fd.fileno())
+            complete_item(runner, task["id"], absolute_offset + 1, result_path)
+    finalize_run(runner)

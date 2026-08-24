@@ -102,6 +102,10 @@ class RunCheckpointManager:
     def latest_path(self) -> Path:
         return self.checkpoint_dir / "latest.pt"
 
+    @property
+    def initial_path(self) -> Path:
+        return self.checkpoint_dir / "checkpoint_initial.pt"
+
     @staticmethod
     def _atomic_save(payload: Mapping[str, Any], target: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -127,6 +131,19 @@ class RunCheckpointManager:
             "rng": capture_rng_state(),
             "progress": dict(progress),
         }
+
+    def save_initial(self, policy, profile_store, progress) -> Path:
+        completed = int(progress.get("completed_items", 0))
+        if completed != 0:
+            raise ValueError("Initial checkpoint requires completed_items == 0")
+        if self.initial_path.exists():
+            raise FileExistsError(
+                f"Initial checkpoint already exists: {self.initial_path}"
+            )
+        payload = self._payload(policy, profile_store, progress)
+        payload["metadata"]["checkpoint_kind"] = "initial"
+        self._atomic_save(payload, self.initial_path)
+        return self.initial_path
 
     def should_save(self, completed_items: int) -> bool:
         return completed_items > 0 and completed_items % self.interval_items == 0
@@ -172,4 +189,12 @@ class RunCheckpointManager:
         ):
             if actual.get(key) != self.metadata.get(key):
                 raise ValueError(f"Run checkpoint metadata mismatch for {key}")
+        if (
+            "chat_context_hash" in actual
+            and actual.get("chat_context_hash")
+            != self.metadata.get("chat_context_hash")
+        ):
+            raise ValueError(
+                "Run checkpoint metadata mismatch for chat_context_hash"
+            )
         return payload

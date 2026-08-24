@@ -52,23 +52,17 @@ class LLMPolicy(Policy):
                                                                          global_info.workflow.all_actions, 
                                                                          self.agent_graph.agent_prompt, 
                                                                          max_num, 
-                                                                         max_num,
-                                                                         self.agent_hash_list[0])           
+                                                                         max_num)
         response, _ = query_gpt(select_prompt)
-        regex = r"\b(\w{32})\b"
-        matches = re.findall(regex, response)
-        if len(matches) <= 0:
+        candidate_indices = [int(value) for value in re.findall(r"\b\d+\b", response)]
+        candidate_indices = [index for index in candidate_indices if 0 <= index < self.actions_dim]
+        if len(candidate_indices) <= 0:
             raise Exception("No agent found")
-        if len(matches) > max_num:
-            matches = matches[:max_num]
-        elif len(matches) < max_num:
-            matches += [matches[-1]]*(max_num-len(matches))
-        for index, m in enumerate(matches[1:]):
-            if  m is None:
-                matches[index]  = matches[index-1]
-        for m in matches:
-            assert m in self.agent_hash_list
-        return matches
+        if len(candidate_indices) > max_num:
+            candidate_indices = candidate_indices[:max_num]
+        elif len(candidate_indices) < max_num:
+            candidate_indices += [candidate_indices[-1]] * (max_num - len(candidate_indices))
+        return [self.agent_hash_list[index] for index in candidate_indices]
     
     def forward_prior(self, global_info, max_num:int = 1) -> list:
         matches = self.forward(global_info, max_num)

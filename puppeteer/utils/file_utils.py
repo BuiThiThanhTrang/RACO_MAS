@@ -5,7 +5,7 @@ import time
 import logging
 import re
 import os
-from typing import  Optional, List
+from typing import Optional, List, Tuple
 import ast
 from model import query_gpt
 
@@ -112,6 +112,74 @@ def code_is_valid(code: str) -> bool:
         return False
 
 
+def extract_python_code(response) -> str:
+    """Extract Python without asking another model to repair JSON."""
+    if response is None:
+        return ""
+    if not isinstance(response, str):
+        response = str(response)
+
+    text = response.strip()
+    if not text:
+        return ""
+
+    blocks = re.findall(
+        r"```(?:python|py)?\s*\r?\n(.*?)```",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if blocks:
+        for block in blocks:
+            candidate = block.strip()
+            if code_is_valid(candidate):
+                return candidate
+        return blocks[0].strip()
+
+    if text.lower().startswith("python\n"):
+        text = text.split("\n", 1)[1]
+    return text.strip()
+
+
+def prepare_python_code(response) -> Tuple[str, str]:
+    """Return executable Python and an empty error, or no code and a syntax error."""
+    code = extract_python_code(response)
+    if not code:
+        return "", "The response did not contain Python code."
+    if code.startswith("{"):
+        try:
+            payload = json.loads(code)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict) and ("action" in payload or "parameter" in payload):
+            return "", "JSON envelopes are not supported; return Python code directly."
+
+    try:
+        syntax_tree = ast.parse(code)
+    except SyntaxError as exc:
+        location = f"line {exc.lineno}, column {exc.offset}"
+        return "", f"{exc.msg} ({location})"
+
+    has_print_call = any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "print"
+        for node in ast.walk(syntax_tree)
+    )
+    defines_solution = any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "solution"
+        for node in ast.walk(syntax_tree)
+    )
+    if not has_print_call and defines_solution:
+        code = code.rstrip() + "\n\nprint(solution())"
+        try:
+            ast.parse(code)
+        except SyntaxError as exc:
+            location = f"line {exc.lineno}, column {exc.offset}"
+            return "", f"{exc.msg} ({location})"
+    return code, ""
+
+
 def extract_code_from_text(text: str) -> str:
     """Extract valid Python code blocks from text."""
     code_blocks = re.findall(r"```.*?```", text, re.DOTALL)
@@ -139,17 +207,3 @@ def extract_code_from_text(text: str) -> str:
         return ""
     candidates.sort(reverse=True)
     return candidates[0][1]
-
-
-def format_code_with_prints(code: Optional[str]) -> str:
-    """Ensure code has print statements for important info."""
-    if code is None:
-        return ""
-    if not isinstance(code, str):
-        code = str(code)
-    extracted_code = extract_code_from_text(code) or code
-    if re.search(r"\bprint\s*\(", extracted_code):
-        return extracted_code
-    if re.search(r"def\s+solution\s*\(", extracted_code):
-        return extracted_code.rstrip() + "\n\nprint(solution())"
-    return extracted_code

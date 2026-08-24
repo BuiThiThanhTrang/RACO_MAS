@@ -9,14 +9,37 @@ logging:
 # For local_reward_model, uncomment model_weight_path and set
 # state_representation.type to local_reward_model.
 # model_weight_path: nvidia/Llama-3.1-Nemotron-70B-Reward-HF
-reward_model:
-  torch_dtype: auto   # auto uses fp16 on V100, bf16 on A100/H100, fp32 on CPU
-  device_map: auto
-  quantization: none  # options: none, 8bit, 4bit; 8bit/4bit require bitsandbytes
+# Skywork scores each completed trajectory once. It is never part of routing
+# state and is disabled automatically outside dataset mode=train.
+trajectory_reward:
+  enabled: true
+  apply_during: train
+  backend: http
+  model: Skywork/Skywork-Reward-V2-Llama-3.1-8B
+  base_url_env: SKYWORK_REWARD_BASE_URL
+  api_key_env: SKYWORK_REWARD_API_KEY
+  endpoint: /v1/reward
+  weight: 0.1
+  centered: true
   max_length: 4096
   max_chars: 12000
+  max_step_chars: 3000
+  timeout_seconds: 60
+  max_retries: 3
+  failure_policy: task_reward_only
+  trace_file: trajectory_rewards.jsonl
+  cache:
+    enabled: true
 
-# API mode keeps the policy state task-dependent without requiring a large local GPU.
+# Step count and model-size/token cost are distinct, explicit penalties.
+cost_reward:
+  step_penalty: 0.1
+  token_cost_weight: 0.1
+  normalization: 100000.0
+
+# LEGACY BASELINE ONLY: ContinuousREINFORCE reads this block. The Role-Aware
+# policy does not read it; RoleAwareREINFORCE uses task_analyzer below.
+# Keep this block unchanged so the baseline remains reproducible.
 state_representation:
   type: api_embedding
   provider: gemini
@@ -66,11 +89,36 @@ max_retry_times: 3  # maximum number of times to retry API calls
 retry_wait_min: 1  # minimum seconds between chat API retries
 retry_wait_max: 3  # maximum seconds between chat API retries
 max_json_reformat_turns: 3  # maximum number of times to retry JSON parsing/reformatting
-external_tools_enabled: True  # whether to enable external tools like web search, file search, etc.
+
+# Full agent dialog remains in memory. Only the request copy sent to an LLM is
+# bounded; retries reduce the input budget deterministically.
+chat_context:
+  # Lowest common provider limit is currently 16,384 total tokens. Reserve
+  # 4,096 tokens for generation and keep a small safety margin on the input.
+  max_input_tokens: 12000
+  reserved_output_tokens: 4096
+  retry_shrink_factor: 0.75
+  min_input_tokens: 8000
+  preserve_system: true
+  preserve_latest_messages: 4
+  chars_per_token: 3.0
+external_tools_enabled: False  # whether to enable external tools like web search, file search, etc.
 
 file_path:
   root_file_path: ./data  # the path to the folder containing all the files which agents might need
 
 graph:
-  max_parallel_paths: 3  # maximum number of parallel paths to explore in the graph
-  max_step_num: 5  # maximum number of steps (nodes) in each path
+  max_width: 3  # maximum number of parallel paths (locked W3D4 topology)
+  max_depth: 4  # maximum number of activated teammates in each path
+
+# ACTIVE ROLE-AWARE TASK ANALYZER. All production experiment YAML files inherit
+# this BGE remote configuration unless they explicitly override task_analyzer.
+task_analyzer:
+  primary:
+    backend: openai_compatible_embedding
+    model: BAAI/bge-large-en-v1.5
+    dim: 1024
+    frozen: true
+    base_url_env: TASK_ANALYZER_BASE_URL
+    api_key_env: TASK_ANALYZER_API_KEY
+    max_input_tokens: 512

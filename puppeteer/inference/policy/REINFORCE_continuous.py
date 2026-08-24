@@ -6,17 +6,14 @@ import json
 import random
 import numpy as np
 import torch.nn as nn
-import yaml
 import logging
-from utils.other_utils import Singleton
+import copy
 from inference.policy.base_policy import LLMPolicy, LearningPolicy
 from model.embedding import APIEmbeddingStateRepresentation, RewardModelTokenRepresentation
 
-global_config = yaml.safe_load(open("./config/global.yaml", "r"))
 logger = logging.getLogger("train")
 
 
-@Singleton
 class MLP_PolicyNetwork(nn.Module):
     def __init__(self, input_dim, output_dim):
         super().__init__()
@@ -42,12 +39,13 @@ class MLP_PolicyNetwork(nn.Module):
         return x
 
 
-@Singleton
 class ContinuousREINFORCE(LearningPolicy):
-    def __init__(self, agent_graph, action_graph, config_path="config/policy.json"):
+    def __init__(self, agent_graph, action_graph, config, runtime_config):
         super().__init__(agent_graph, action_graph)
-        with open(config_path, 'r') as f:
-            self.config = json.load(f)
+        if config is None:
+            raise ValueError("ContinuousREINFORCE requires an explicit per-run config")
+        self.config = copy.deepcopy(dict(config))
+        self.runtime_config = copy.deepcopy(dict(runtime_config))
         
         # Set parameters from config
         self.device = self.config["device"]["type"]
@@ -120,7 +118,7 @@ class ContinuousREINFORCE(LearningPolicy):
         if self.agent_graph.terminator_agent_index is None:
             raise ValueError(
                 "No terminator agent found in the selected personas file. "
-                "Add an agent whose name starts with 'TerminatorAgent'."
+                "Add a RoleCard whose allowed_actions contains 'terminate'."
             )
         self.end_action = torch.tensor(self.agent_graph.terminator_agent_index, device=self.device)
         self.web_actions = torch.tensor(self.agent_graph.search_agent_indices, device=self.device)
@@ -139,14 +137,14 @@ class ContinuousREINFORCE(LearningPolicy):
         
         # Initialize optimizer
         self.optimizer = torch.optim.Adam(self.policy_network.parameters(), lr=self.learning_rate)
-        self.max_step_num = global_config.get("graph").get("max_step_num")
+        self.max_step_num = self.runtime_config.get("graph").get("max_step_num")
         self.llm_policy = LLMPolicy(self.agent_graph, self.action_graph)
         
         if self.training:
             atexit.register(self.save_model)
 
     def _build_state_representation(self):
-        state_config = global_config.get("state_representation", {}) or {}
+        state_config = self.runtime_config.get("state_representation", {}) or {}
         state_type = state_config.get("type")
         supported_state_types = {"api_embedding", "local_reward_model"}
 
@@ -158,9 +156,9 @@ class ContinuousREINFORCE(LearningPolicy):
 
         if state_type == "api_embedding":
             logger.info("Using API embedding state representation.")
-            return APIEmbeddingStateRepresentation()
+            return APIEmbeddingStateRepresentation(state_config=state_config)
 
-        model_weight_path = global_config.get("model_weight_path")
+        model_weight_path = self.runtime_config.get("model_weight_path")
         if not isinstance(model_weight_path, str) or not model_weight_path.strip():
             raise ValueError(
                 "state_representation.type is local_reward_model, but model_weight_path is missing. "
@@ -170,7 +168,10 @@ class ContinuousREINFORCE(LearningPolicy):
             )
 
         logger.info("Using local 70B reward-model state representation.")
-        return RewardModelTokenRepresentation()
+        return RewardModelTokenRepresentation(
+            model_weight_path=model_weight_path,
+            reward_model_config=self.runtime_config.get("reward_model"),
+        )
 
     def logarithmic_cost(self, step):
         """Calculate logarithmic cost using config parameters"""
