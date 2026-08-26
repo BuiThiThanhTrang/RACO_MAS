@@ -169,7 +169,13 @@ class RunCheckpointManager:
         for stale in snapshots[self.keep_snapshots :]:
             stale.unlink()
 
-    def load(self, path: str | Path) -> dict[str, Any]:
+    def load(
+        self, path: str | Path, validation_scope: str = "exact"
+    ) -> dict[str, Any]:
+        if validation_scope not in {"exact", "policy_transfer"}:
+            raise ValueError(
+                "Checkpoint validation_scope must be exact or policy_transfer"
+            )
         target = Path(path)
         if not target.is_file():
             raise FileNotFoundError(f"Run checkpoint not found: {target}")
@@ -180,13 +186,15 @@ class RunCheckpointManager:
             if key not in payload:
                 raise ValueError(f"Run checkpoint is missing {key!r}")
         actual = payload["metadata"]
-        for key in (
+        exact_keys = (
             "dataset_name",
             "seed",
-            "pool_fingerprint",
             "split_manifest_hash",
             "config_hash",
-        ):
+        )
+        if validation_scope == "exact":
+            exact_keys = (*exact_keys, "pool_fingerprint")
+        for key in exact_keys:
             if actual.get(key) != self.metadata.get(key):
                 raise ValueError(f"Run checkpoint metadata mismatch for {key}")
         if (

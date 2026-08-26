@@ -266,16 +266,19 @@ Chạy bốn lệnh probe profiling ở phần trên. Fresh train fail-fast nế
 
 ### Bước 5: Chạy probe
 
-- Chạy 10 item probe của task trước final evaluation.
+- Tạo probe profile riêng cho từng pool bằng đúng 10 item probe đã khóa.
 - Probe không được dùng để cập nhật policy cho final.
-- Lưu profile và routing trace để phân tích adaptation.
+- Artifact profile phải có manifest khớp fingerprint và teammate set của pool.
+- Lưu profile và routing trace để phân tích generalization.
 
 ### Bước 6: Final evaluation
 
 - Không tune trên final split.
 - Chạy lần lượt S0, S1, từng biến thể S2, S3-primary và S3-mixed.
 - Dùng --personas để thay pool theo scenario_matrix.yaml.
-- Dùng cùng checkpoint, seed, evaluator và topology đã khóa.
+- Dùng cùng policy checkpoint, seed, evaluator và topology đã khóa.
+- Với pool mới, chỉ transfer policy weights/global_step rồi load explicit probe
+  profile của pool đó; không restore optimizer, RNG, progress hoặc profile S0.
 
 ## Cấu hình máy thuê đề xuất
 
@@ -346,3 +349,6 @@ Bộ test hiện tại bao phủ:
 - Split manifest đúng kích thước và không giao nhau.
 - SRDD/CW có đúng req schema.
 - Smoke test bốn task tạo JSONL artifact hợp lệ.
+- Exact resume từ chối pool fingerprint khác.
+- Policy-transfer chạy checkpoint S0 với external profile S1.
+- Generalization evaluation không restore optimizer/progress hoặc update profile.

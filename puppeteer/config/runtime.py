@@ -124,9 +124,12 @@ def load_experiment_config(
     profiles_raw = raw.get("profiles") or {}
     initialization_raw = profiles_raw.get("initialization") or {}
     initialization_source = str(initialization_raw.get("source", "probe"))
-    if initialization_source not in {"probe", "reference", "priors"}:
+    if initialization_source not in {
+        "checkpoint", "probe", "reference", "priors"
+    }:
         raise ValueError(
-            "profiles.initialization.source must be probe, reference, or priors"
+            "profiles.initialization.source must be checkpoint, probe, reference, "
+            "or priors"
         )
     checkpoint_raw = raw.get("checkpoint") or {}
     reset_scope = str(profiles_raw.get("reset_scope", "teammate_sequence"))

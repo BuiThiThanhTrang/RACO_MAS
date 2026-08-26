@@ -521,6 +521,11 @@ class RoleAwareREINFORCE(LearningPolicy):
             raise ValueError("Checkpoint state dimension mismatch")
         if checkpoint.get("candidate_dim") != self.policy_network.candidate_dim:
             raise ValueError("Checkpoint candidate feature dimension mismatch")
+        checkpoint_roles = checkpoint.get("roles")
+        if checkpoint_roles is not None and tuple(checkpoint_roles) != tuple(
+            ROLE_NAMES
+        ):
+            raise ValueError("Checkpoint role schema mismatch")
         self.policy_network.load_state_dict(checkpoint["model_state_dict"], strict=True)
         if load_optimizer:
             optimizer_state = checkpoint.get("optimizer_state_dict")

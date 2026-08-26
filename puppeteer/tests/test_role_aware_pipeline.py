@@ -194,6 +194,20 @@ class RoleAwarePipelineTests(unittest.TestCase):
             )
         self.assertTrue(flag, output)
         self.assertEqual(output.strip(), "42")
+    def test_python_interpreter_handles_unicode_source_and_output(self):
+        code = (
+            "# Unicode transition: input → output\n"
+            "message = 'Kết quả → 42'\n"
+            "print(message)"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            flag, output = PythonInterpreter("run_python").execute(
+                work_path=directory,
+                code=code,
+                file_path="",
+                timeout_detected=True,
+            )
+        self.assertTrue(flag, output)
 
     def test_dynamic_routing_threshold_uses_available_agent_count(self):
         policy = object.__new__(RoleAwareREINFORCE)

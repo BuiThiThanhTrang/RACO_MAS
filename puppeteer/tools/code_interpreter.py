@@ -47,7 +47,7 @@ class PythonInterpreter(CodeInterpreter):
     def write(self, work_path, code):
         code_path = os.path.join(work_path, "agent-main.py")
 
-        with open(code_path, 'w') as file:
+        with open(code_path, "w", encoding="utf-8", newline="\n") as file:
             file.write(code)
         return code_path
 
@@ -87,10 +87,17 @@ class PythonInterpreter(CodeInterpreter):
                 self.move_file(src_path=file_path, dest_path=work_path)
 
             command = [sys.executable, os.path.basename(code_path)]
+            child_env = os.environ.copy()
+            child_env["PYTHONIOENCODING"] = "utf-8"
+            child_env["PYTHONUTF8"] = "1"
             process_options = {
                 "cwd": work_path,
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "env": child_env,
             }
             if os.name == 'nt':
                 process_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -109,8 +116,8 @@ class PythonInterpreter(CodeInterpreter):
                     return True, "The process completes without encountering any errors."
 
             return_code = process.returncode
-            output = out.decode('utf-8', errors='ignore')
-            error_output = err.decode('utf-8', errors='ignore')
+            output = out or ""
+            error_output = err or ""
 
             # If the process is still running after the timeout
             if process.poll() is None:

@@ -1,9 +1,11 @@
+import copy
 import json
 import random
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -29,6 +31,7 @@ from tasks.runner import BenchmarkRunner
 PROJECT = Path(__file__).resolve().parents[1]
 EXPERIMENT = PROJECT / "config" / "experiments" / "role_aware_gsm.yaml"
 S0 = PROJECT / "personas" / "role_aware" / "s0_pool.jsonl"
+S1 = PROJECT / "personas" / "role_aware" / "s1_pool.jsonl"
 
 
 class DummyPolicy:
@@ -45,6 +48,31 @@ class DummyPolicy:
             "global_step": 7,
             "config": {},
         }
+
+
+class DummyRunnerPolicy:
+    def __init__(self, agent_graph, action_graph, config, runtime_config):
+        self.global_step = 0
+        self.loaded_optimizer = None
+        self.optimizer_updates_enabled = bool(
+            config.get("training", {}).get("training", False)
+        )
+
+    def training_state_dict(self):
+        return {
+            "model_state_dict": {"weight": torch.tensor([3.0])},
+            "optimizer_state_dict": {"state": {}, "param_groups": []},
+            "state_dim": 1024,
+            "candidate_dim": 48,
+            "roles": (),
+            "global_step": self.global_step,
+            "config": {},
+        }
+
+    def load_training_state_dict(self, checkpoint, load_optimizer=True):
+        self.loaded_optimizer = bool(load_optimizer)
+        self.global_step = int(checkpoint["global_step"])
+        self.loaded_weight = checkpoint["model_state_dict"]["weight"].clone()
 
 
 class RunLifecycleTests(unittest.TestCase):
@@ -70,6 +98,19 @@ class RunLifecycleTests(unittest.TestCase):
             keep_snapshots=3,
         )
 
+    def _runner_policy_config(self, policy_mode, dataset_mode):
+        experiment = load_experiment_config(EXPERIMENT)
+        policy = copy.deepcopy(dict(experiment.policy))
+        policy["dataset_name"] = "gsm-hard"
+        policy["dataset_mode"] = dataset_mode
+        policy["policy_mode"] = policy_mode
+        policy["seed"] = 42
+        policy.setdefault("training", {})["training"] = (
+            policy_mode == "train" and dataset_mode == "train"
+        )
+        policy["training"]["loading"] = False
+        return policy
+
     def test_mode_matrix_disables_non_train_and_requires_evolved_checkpoint(self):
         experiment = load_experiment_config(EXPERIMENT)
         train = _resolve_policy_config(
@@ -87,6 +128,15 @@ class RunLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "explicit checkpoint"):
             _resolve_policy_config(
                 experiment, "gsm-hard", "probe", "evolved", None, 42
+            )
+        with self.assertRaisesRegex(ValueError, "cannot load a checkpoint"):
+            _resolve_policy_config(
+                experiment,
+                "gsm-hard",
+                "dev",
+                "initialized",
+                str(EXPERIMENT),
+                42,
             )
 
     def test_reference_profile_build_never_overwrites_probe_artifact(self):
@@ -110,6 +160,40 @@ class RunLifecycleTests(unittest.TestCase):
             experiment, source_override="priors"
         )
         self.assertEqual((source, path), ("priors", None))
+        source, path = _resolve_profile_initialization(
+            experiment, source_override="checkpoint"
+        )
+        self.assertEqual((source, path), ("checkpoint", None))
+        with self.assertRaisesRegex(ValueError, "profile source checkpoint"):
+            _resolve_profile_initialization(
+                experiment,
+                source_override="checkpoint",
+                path_override="profile.json",
+            )
+
+    def test_checkpoint_role_schema_is_validated_before_loading_weights(self):
+        class TrackingNetwork:
+            state_dim = 1024
+            candidate_dim = 48
+            loaded = False
+
+            def load_state_dict(self, state, strict=True):
+                self.loaded = True
+
+        policy = object.__new__(RoleAwareREINFORCE)
+        policy.policy_network = TrackingNetwork()
+        policy.global_step = 0
+        checkpoint = {
+            "state_dim": 1024,
+            "candidate_dim": 48,
+            "roles": ("wrong-role",),
+            "model_state_dict": {},
+            "global_step": 7,
+        }
+        with self.assertRaisesRegex(ValueError, "role schema"):
+            policy.load_training_state_dict(checkpoint, load_optimizer=False)
+        self.assertFalse(policy.policy_network.loaded)
+        self.assertEqual(policy.global_step, 0)
 
     def test_non_train_update_never_steps_or_increments_global_step(self):
         policy = object.__new__(RoleAwareREINFORCE)
@@ -242,6 +326,29 @@ class RunLifecycleTests(unittest.TestCase):
             self.assertIn("progress", payload)
             self.assertEqual(payload["policy"]["global_step"], 7)
 
+    def test_policy_transfer_allows_new_pool_but_exact_restore_rejects_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self._manager(directory)
+            source.save(
+                DummyPolicy(),
+                self._profiles(),
+                {"completed_items": 20},
+                force=True,
+            )
+            target_metadata = dict(source.metadata)
+            target_metadata["pool_fingerprint"] = "new-pool"
+            target = RunCheckpointManager(directory, target_metadata)
+
+            with self.assertRaisesRegex(ValueError, "pool_fingerprint"):
+                target.load(source.latest_path)
+            payload = target.load(
+                source.latest_path, validation_scope="policy_transfer"
+            )
+            self.assertEqual(payload["policy"]["global_step"], 7)
+            with self.assertRaisesRegex(ValueError, "validation_scope"):
+                target.load(source.latest_path, validation_scope="unsupported")
+
+
     def test_completed_probe_profile_loads_before_routing(self):
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
@@ -338,6 +445,99 @@ class RunLifecycleTests(unittest.TestCase):
             self.assertTrue(manifest["complete"])
             self.assertTrue(profile_path.with_suffix(".manifest.json").is_file())
             self.assertTrue(profile_path.with_suffix(".assignment.json").is_file())
+
+    @patch("tasks.runner.RoleAwareREINFORCE", DummyRunnerPolicy)
+    def test_evolved_policy_transfer_uses_new_pool_external_profiles(self):
+        experiment = load_experiment_config(EXPERIMENT)
+        runtime_config = {
+            "graph": {"max_width": 3, "max_depth": 4},
+            "chat_context": {},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source_runner = BenchmarkRunner(
+                S0,
+                runtime_config,
+                policy_config=self._runner_policy_config("initialized", "dev"),
+                tool_policy=experiment.tools,
+                profile_config=experiment.profiles,
+                checkpoint_config=experiment.checkpoint,
+                run_dir=directory / "source",
+                dataset_name="gsm-hard",
+                dataset_mode="dev",
+                seed=42,
+                profile_source="priors",
+            )
+            source_id = self.specs[0].teammate_id
+            source_runner.profile_store.get(
+                source_id
+            ).global_reliability_mean = 0.11
+            source_runner.policy.global_step = 23
+            checkpoint_path = source_runner.checkpoint_manager.save(
+                source_runner.policy,
+                source_runner.profile_store,
+                {"completed_items": 20},
+                force=True,
+            )
+
+            s1_specs = load_teammate_specs(S1)
+            s1_store = ProfileStore(alpha=experiment.profiles.alpha)
+            s1_store.initialize(s1_specs)
+            s1_id = s1_specs[0].teammate_id
+            s1_store.get(s1_id).global_reliability_mean = 0.87
+            profile_path = directory / "gsm-hard_s1_probe_profiles.json"
+            s1_store.save(profile_path)
+            profile_manifest = {
+                "schema_version": "1.0",
+                "complete": True,
+                "task": "gsm-hard",
+                "seed": 42,
+                "items_per_teammate": 10,
+                "pool_fingerprint": pool_fingerprint(s1_specs),
+                "split_manifest_hash": source_runner.split_manifest_hash,
+                "teammate_ids": [spec.teammate_id for spec in s1_specs],
+            }
+            profile_path.with_suffix(".manifest.json").write_text(
+                json.dumps(profile_manifest), encoding="utf-8"
+            )
+
+            target_runner = BenchmarkRunner(
+                S1,
+                runtime_config,
+                policy_config=self._runner_policy_config("evolved", "final"),
+                tool_policy=experiment.tools,
+                profile_config=experiment.profiles,
+                checkpoint_config=experiment.checkpoint,
+                run_dir=directory / "target",
+                dataset_name="gsm-hard",
+                dataset_mode="final",
+                seed=42,
+                checkpoint_path=checkpoint_path,
+                profile_path=profile_path,
+                profile_source="probe",
+            )
+
+            self.assertFalse(target_runner.checkpoint_profile_restore)
+            self.assertFalse(target_runner.resume_training)
+            self.assertFalse(target_runner.profile_updates_enabled)
+            self.assertFalse(target_runner.policy.loaded_optimizer)
+            self.assertEqual(target_runner.policy.global_step, 23)
+            self.assertTrue(
+                torch.equal(
+                    target_runner.policy.loaded_weight,
+                    torch.tensor([3.0]),
+                )
+            )
+            self.assertEqual(
+                set(target_runner.profile_store.to_dict()),
+                {spec.teammate_id for spec in s1_specs},
+            )
+            self.assertNotIn(source_id, target_runner.profile_store.to_dict())
+            self.assertEqual(
+                target_runner.profile_store.get(s1_id).global_reliability_mean,
+                0.87,
+            )
+            self.assertEqual(target_runner.progress["completed_items"], 0)
 
     def test_resume_window_and_artifact_count_are_exact(self):
         with tempfile.TemporaryDirectory() as directory:

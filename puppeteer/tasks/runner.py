@@ -127,25 +127,54 @@ class BenchmarkRunner:
             ),
             keep_snapshots=getattr(checkpoint_config, "keep_snapshots", 3),
         )
+        self.policy_mode = str(policy_config.get("policy_mode", "initialized"))
+        self.profile_source = str(
+            profile_source
+            or ("checkpoint" if checkpoint_path is not None else "priors")
+        )
+        if self.profile_source == "checkpoint" and checkpoint_path is None:
+            raise ValueError("Profile source checkpoint requires --checkpoint")
+        self.checkpoint_profile_restore = bool(
+            checkpoint_path is not None
+            and (
+                self.policy_mode == "train"
+                or self.profile_source == "checkpoint"
+            )
+        )
+        checkpoint_validation_scope = (
+            "exact" if self.checkpoint_profile_restore else "policy_transfer"
+        )
         self._resume_payload = (
-            self.checkpoint_manager.load(checkpoint_path)
+            self.checkpoint_manager.load(
+                checkpoint_path,
+                validation_scope=checkpoint_validation_scope,
+            )
             if checkpoint_path is not None
             else None
         )
         self.resume_training = bool(
             self._resume_payload is not None
-            and policy_config.get("policy_mode") == "train"
+            and self.policy_mode == "train"
         )
         self._initial_checkpoint_saved = False
-        if self._resume_payload is not None:
+        if self._resume_payload is not None and self.checkpoint_profile_restore:
             self.profile_store.load_state_dict(
                 self._resume_payload["profiles"], strict=True
             )
-        elif profile_path is not None and not self.profile_build_mode:
-            self._load_initial_profiles(profile_path, profile_source or "probe")
+        elif (
+            self.profile_source in {"probe", "reference"}
+            and not self.profile_build_mode
+        ):
+            if profile_path is None:
+                raise ValueError(
+                    f"Profile source {self.profile_source} requires --profile_path"
+                )
+            self._load_initial_profiles(profile_path, self.profile_source)
+        elif self.profile_source == "priors" and profile_path is not None:
+            raise ValueError("Profile source priors does not accept --profile_path")
         elif (
             self.dataset_mode == "train"
-            and policy_config.get("policy_mode") == "train"
+            and self.policy_mode == "train"
             and getattr(
                 getattr(profile_config, "initialization", None),
                 "required_for_train",
@@ -176,7 +205,7 @@ class BenchmarkRunner:
         if self._resume_payload is not None:
             self.policy.load_training_state_dict(
                 self._resume_payload["policy"],
-                load_optimizer=policy_config.get("policy_mode") == "train",
+                load_optimizer=self.policy_mode == "train",
             )
             if self.resume_training:
                 restore_rng_state(self._resume_payload["rng"])

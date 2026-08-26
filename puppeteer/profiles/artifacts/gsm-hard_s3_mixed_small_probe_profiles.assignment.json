@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "complete": false,
+  "source": "probe",
+  "task": "gsm-hard",
+  "seed": 42,
+  "items_per_teammate": 10,
+  "teammate_ids": [
+    "s3_mixed-r00-t00",
+    "s3_mixed-r01-t01",
+    "s3_mixed-r02-t01",
+    "s3_mixed-r03-t00",
+    "s3_mixed-r04-t01",
+    "s3_mixed-r07-t00",
+    "s3_mixed-r08-t01",
+    "s3_mixed-r09-t01",
+    "s3_mixed-r10-t01"
+  ],
+  "profiled_teammate_ids": [
+    "s3_mixed-r00-t00",
+    "s3_mixed-r01-t01",
+    "s3_mixed-r02-t01",
+    "s3_mixed-r03-t00",
+    "s3_mixed-r04-t01",
+    "s3_mixed-r07-t00",
+    "s3_mixed-r08-t01",
+    "s3_mixed-r09-t01",
+    "s3_mixed-r10-t01"
+  ],
+  "task_ids": [
+    "912",
+    "320",
+    "991",
+    "557",
+    "50",
+    "1227",
+    "872",
+    "1081",
+    "755",
+    "1009"
+  ],
+  "completed_teammate_ids": [],
+  "pool_fingerprint": "291fa54b17559b7318f1294b071b2efc118d9ecdb53a9ff370bbd7be4d977ed0",
+  "split_manifest_hash": "68d635e24b2001d58600a3b0f79cbb29abfba077197fb0fb4fb9da54b5998b57",
+  "profile_file": "gsm-hard_s3_mixed_small_probe_profiles.json"
+}

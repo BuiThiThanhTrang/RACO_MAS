@@ -56,6 +56,10 @@ def _resolve_policy_config(experiment, task, dataset_mode, policy_mode, checkpoi
         )
     if policy_mode == "evolved" and checkpoint is None:
         raise ValueError("policy_mode=evolved requires an explicit checkpoint")
+    if policy_mode == "initialized" and checkpoint is not None:
+        raise ValueError(
+            "policy_mode=initialized cannot load a checkpoint; use evolved"
+        )
     if dataset_mode == "final" and policy_mode != "evolved":
         raise ValueError("dataset_mode=final requires policy_mode=evolved")
     if checkpoint is not None and not Path(checkpoint).is_file():
@@ -101,9 +105,11 @@ def _resolve_profile_initialization(
         return source, str(configured.with_name(reference_name))
 
     source = str(source_override or configured_source)
-    if source == "priors":
+    if source in {"checkpoint", "priors"}:
         if path_override is not None:
-            raise ValueError("--profile_path cannot be used with profile priors")
+            raise ValueError(
+                f"--profile_path cannot be used with profile source {source}"
+            )
         return source, None
     if path_override is not None:
         return source, path_override
@@ -153,7 +159,7 @@ def main():
     )
     parser.add_argument(
         "--profile_source",
-        choices=["probe", "reference", "priors"],
+        choices=["checkpoint", "probe", "reference", "priors"],
         default=None,
     )
     parser.add_argument("--profile_path", type=str, default=None)
@@ -179,6 +185,18 @@ def main():
     if profile_build_source is not None:
         dataset_mode = profile_build_source
         policy_mode = "initialized"
+    profile_source_override = args.profile_source
+    if policy_mode == "evolved" and profile_source_override is None:
+        profile_source_override = "checkpoint"
+    if (
+        args.checkpoint is not None
+        and policy_mode == "train"
+        and (args.profile_source is not None or args.profile_path is not None)
+    ):
+        parser.error(
+            "Train resume restores profiles from the checkpoint; do not pass "
+            "--profile_source or --profile_path"
+        )
     if args.checkpoint is not None and policy_mode == "train":
         checkpoint_path = Path(args.checkpoint).resolve()
         checkpoint_run_dir = checkpoint_path.parent.parent
@@ -191,11 +209,20 @@ def main():
         profile_source, profile_path = _resolve_profile_initialization(
             experiment,
             build_source=profile_build_source,
-            source_override=args.profile_source,
+            source_override=profile_source_override,
             path_override=args.profile_path,
         )
     except ValueError as error:
         parser.error(str(error))
+    if (
+        policy_mode == "evolved"
+        and profile_source in {"probe", "reference"}
+        and args.profile_path is None
+    ):
+        parser.error(
+            "Evolved evaluation with an external profile requires an explicit "
+            "--profile_path"
+        )
 
     effective_dataset = replace(
         experiment.dataset,

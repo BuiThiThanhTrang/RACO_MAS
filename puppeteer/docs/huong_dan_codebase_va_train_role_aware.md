@@ -357,7 +357,9 @@ Trong `probe/dev/final`:
 
 - optimizer không update;
 - capability profile không update;
-- evolved mode load policy/profile từ checkpoint;
+- evolved với `--profile_source checkpoint` load policy và profile từ checkpoint;
+- evolved với `--profile_source probe/reference/priors` chỉ load policy từ
+  checkpoint rồi dùng profile tương ứng với pool hiện tại;
 - dataset progress train không làm evaluation bỏ qua item.
 
 ## 9. Checkpoint và resume
@@ -389,6 +391,11 @@ Quy tắc:
 - cuối run bình thường force-save `latest.pt`;
 - resume phải truyền `--checkpoint` explicit;
 - `data_start`/`data_limit` khi resume phải giống run gốc.
+- resume train luôn dùng exact restore: policy, optimizer, profile, RNG và progress;
+- evolved dùng profile checkpoint cũng exact restore theo pool fingerprint;
+- evolved dùng external profile là policy-transfer: cho phép pool fingerprint khác,
+  nhưng vẫn kiểm tra task, seed, split, config và kiến trúc policy;
+- policy-transfer không restore optimizer, RNG hoặc dataset progress.
 
 Artifact JSONL được flush và fsync trước khi item được đánh dấu completed. Nếu JSONL đi trước checkpoint, phần dư được backup thành `*.uncommitted_after_XXXX.jsonl`, artifact được cắt về checkpoint boundary và item chưa commit được replay.
 
@@ -452,9 +459,13 @@ Không bắt đầu full SRDD khi smoke evaluator chưa thành công.
 
 ### 12.3. Reference profile và evolved checkpoint
 
-Khi có checkpoint, runner ưu tiên profile trong checkpoint; `--profile_path` không thay profile của evolved checkpoint.
+Nếu không truyền `--profile_source`, evolved mặc định dùng `checkpoint` để giữ
+hành vi S0: policy và profile đều được lấy từ checkpoint, đồng thời pool phải khớp.
 
-Reference-profile comparison hiện dùng trực tiếp với `policy_mode=initialized`. Muốn dùng trained policy nhưng thay reference profile cần explicit counterfactual mode; code hiện chưa hỗ trợ phép kết hợp này.
+Để test pool mới, truyền explicit `--profile_source probe` hoặc `reference` cùng
+`--profile_path`. Khi đó runner chỉ chuyển policy weights và `global_step` từ
+checkpoint; profile được kiểm tra manifest rồi nạp cho pool hiện tại. Dùng
+`--profile_source priors` nếu muốn ablation không dùng profile đã quan sát.
 
 ---
 
@@ -1212,6 +1223,7 @@ Dev:
 python main.py gsm-hard dev `
   --config config/experiments/role_aware_gsm.yaml `
   --policy_mode evolved `
+  --profile_source checkpoint `
   --checkpoint runs/<RUN_ID>/checkpoints/latest.pt
 ```
 
@@ -1223,10 +1235,53 @@ Final:
 python main.py gsm-hard final `
   --config config/experiments/role_aware_gsm.yaml `
   --policy_mode evolved `
+  --profile_source checkpoint `
   --checkpoint runs/<RUN_ID>/checkpoints/latest.pt
 ```
 
 Không tune trên final.
+
+### 13.1. Generalization sang pool mới
+
+Với mỗi pool S1/S2/S3, tạo một probe profile riêng bằng đúng 10 item probe đã
+khóa. Không dùng checkpoint khi build profile và không ghi đè artifact S0.
+
+Ví dụ S1:
+
+```powershell
+python main.py gsm-hard probe `
+  --config config/experiments/role_aware_gsm.yaml `
+  --personas personas/role_aware/s1_pool.jsonl `
+  --build_probe_profiles `
+  --profile_path profiles/artifacts/gsm-hard_s1_seed42_probe_profiles.json
+```
+
+Sau khi manifest báo `complete=true`, chạy trained policy S0 với pool/profile S1:
+
+```powershell
+python main.py gsm-hard final `
+  --config config/experiments/role_aware_gsm.yaml `
+  --personas personas/role_aware/s1_pool.jsonl `
+  --policy_mode evolved `
+  --checkpoint "runs/<TRAIN_RUN_ID>/checkpoints/latest.pt" `
+  --profile_source probe `
+  --profile_path profiles/artifacts/gsm-hard_s1_seed42_probe_profiles.json `
+  --result_suffix s1_trained_final
+```
+
+Lặp lại hai lệnh cho từng persona path trong
+`config/experiments/scenario_matrix.yaml`, đồng thời đặt tên profile và
+`result_suffix` riêng cho từng scenario.
+
+Trong run generalization:
+
+- chỉ policy weights và `global_step` được lấy từ checkpoint S0;
+- profile phải có manifest khớp task, seed, split hash, pool fingerprint và toàn
+  bộ teammate ID của pool mới;
+- optimizer, RNG và dataset progress của train không được restore;
+- final không update policy hoặc profile;
+- `--profile_source checkpoint` vẫn yêu cầu đúng pool S0 và sẽ fail-fast nếu
+  dùng nhầm với pool mới.
 
 ## 14. Reference profile comparison
 
@@ -1244,17 +1299,19 @@ Default path:
 profiles/artifacts/gsm-hard_s0_seed42_reference_profiles.json
 ```
 
-Comparison hiện hỗ trợ trực tiếp với initialized policy:
+Để so sánh trained policy với reference profile, dùng policy-transfer:
 
 ```powershell
 python main.py gsm-hard dev `
   --config config/experiments/role_aware_gsm.yaml `
-  --policy_mode initialized `
+  --policy_mode evolved `
+  --checkpoint "runs/<TRAIN_RUN_ID>/checkpoints/latest.pt" `
   --profile_source reference `
   --profile_path profiles/artifacts/gsm-hard_s0_seed42_reference_profiles.json
 ```
 
-Không giả định `evolved + reference profile` sẽ thay profile checkpoint; code hiện không làm vậy.
+Runner chỉ lấy policy từ checkpoint và lấy profile từ artifact reference explicit.
+Nếu reference profile thuộc pool khác, phải truyền thêm `--personas` tương ứng.
 
 ## 15. Dừng remote service
 
