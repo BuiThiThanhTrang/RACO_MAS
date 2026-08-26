@@ -60,4 +60,4 @@ policy:
 global_config:
   graph:
     max_width: 3
-    max_depth: 4
+    max_depth: 3

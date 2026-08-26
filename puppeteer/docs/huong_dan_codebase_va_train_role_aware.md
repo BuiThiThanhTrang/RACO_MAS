@@ -1205,10 +1205,7 @@ Nếu Skywork lỗi nhưng local vẫn chạy, `failure_policy=task_reward_only`
 python main.py gsm-hard train `
   --config config/experiments/role_aware_gsm.yaml `
   --policy_mode train `
-  --checkpoint "runs\<RUN_ID>\checkpoints\latest.pt" `
-  --data_start 0 `
-  --data_limit 200 `
-  --result_suffix train_200
+  --checkpoint "runs\gsm-hard_train_seed42_20260826_123852\checkpoints\latest.pt"
 ```
 
 Có thể resume từ policy chưa học bằng cách thay `latest.pt` bằng `checkpoint_initial.pt`; khi đó run bắt đầu lại từ item 0 với đúng probe profile, optimizer, RNG và data window đã lưu.

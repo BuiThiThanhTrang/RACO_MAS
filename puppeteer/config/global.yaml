@@ -109,15 +109,25 @@ file_path:
 
 graph:
   max_width: 3  # maximum number of parallel paths (locked W3D4 topology)
-  max_depth: 4  # maximum number of activated teammates in each path
+  max_depth: 3  # maximum number of activated teammates in each path
 
 # ACTIVE ROLE-AWARE TASK ANALYZER. All production experiment YAML files inherit
 # this BGE remote configuration unless they explicitly override task_analyzer.
+# task_analyzer:
+#   primary:
+#     backend: openai_compatible_embedding
+#     model: BAAI/bge-large-en-v1.5
+#     dim: 1024
+#     frozen: true
+#     base_url_env: TASK_ANALYZER_BASE_URL
+#     api_key_env: TASK_ANALYZER_API_KEY
+#     max_input_tokens: 512
+
 task_analyzer:
   primary:
     backend: openai_compatible_embedding
-    model: BAAI/bge-large-en-v1.5
-    dim: 1024
+    model: qwen/qwen3-embedding-8b
+    dim: 4096
     frozen: true
     base_url_env: TASK_ANALYZER_BASE_URL
     api_key_env: TASK_ANALYZER_API_KEY
