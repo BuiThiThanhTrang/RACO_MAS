@@ -71,13 +71,15 @@ class ContinuousREINFORCE(LearningPolicy):
         self.redistribution_weight = self.config["llm"]["redistribution_weight"]
         
         # Initialize state representation and policy network
-        self.state_representation = RewardModelTokenRepresentation()
+        self.state_representation = RewardModelTokenRepresentation(device=self.device)
         self.policy_network = MLP_PolicyNetwork(self.state_representation.dim, self.actions_dim) 
         self.policy_network = self.policy_network.to(self.device) 
         if not self.training:
             self.load_model(self.get_latest_model_path())
-        if self.loading:
-            self.load_model(self.model_path)
+        if self.loading and not self.load_model(self.model_path):
+            raise RuntimeError(
+                f"Failed to load requested training checkpoint: {self.model_path}"
+            )
 
         # Agent setup
         self.agent_hash_list = agent_graph.hash_nodes
@@ -590,4 +592,3 @@ class ContinuousREINFORCE(LearningPolicy):
         except Exception as e:
             print(f"Error finding latest model: {str(e)}")
             return None
-    

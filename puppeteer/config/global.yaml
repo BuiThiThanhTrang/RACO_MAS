@@ -1,19 +1,61 @@
 logging:
-  level:  # logging level, e.g., INFO
-  logpath:  # the path to the folder for storing log files
-model_weight_path: # the path to the folder containing model weights of the puppeteer model base
-api_keys:
-  openai_api_key:  # openai api key
-  openai_base_url:  # openai base url, e.g., https://api.openai.com/v1/
-  bing_api_key: # bing api key for web search
+  level: INFO
+  logpath: ./logs
 
-max_retry_times:  # maximum number of times to retry API calls
-max_json_reformat_turns:  # maximum number of times to retry JSON parsing/reformatting
-external_tools_enabled: True # whether to enable external tools like web search, file search, etc.
+model_weight_path: null
+
+reward_model:
+  backend: remote
+  endpoint_url: ""
+  connect_timeout_seconds: 10
+  read_timeout_seconds: 600
+  max_attempts: 3
+  max_input_chars: 8000
+
+api_keys:
+  openai_api_key: null
+  openai_base_url: https://api.openai.com/v1/
+  bing_api_key: null
+
+max_retry_times: 3
+max_json_reformat_turns: 3
+external_tools_enabled: true
 
 file_path:
-  root_file_path: # the path to the folder containing all the files which agents might need
+  root_file_path: ./data
 
 graph:
-  max_parallel_paths:  # maximum number of parallel paths to explore in the graph
-  max_step_num:  # maximum number of steps (nodes) in each path
+  max_parallel_paths: 4
+  max_step_num: 2
+# Provider credentials are read from environment variables, never stored here.
+providers:
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+  huggingface:
+    base_url: https://router.huggingface.co/v1
+    api_key_env: HF_TOKEN
+
+# Internal text helpers use an existing pool model rather than requiring OpenAI.
+auxiliary_model: qwen-2.5-14b
+
+# Per-model overrides can specify an HF provider suffix or dedicated endpoint.
+agent_models:
+  qwen-2.5-7b:
+    provider: huggingface
+    api_model_name: Qwen/Qwen2.5-7B-Instruct:featherless-ai
+  qwen-2.5-14b:
+    provider: huggingface
+    api_model_name: Qwen/Qwen2.5-14B-Instruct:featherless-ai
+  llama-3.1-8b:
+    provider: huggingface
+    api_model_name: meta-llama/Llama-3.1-8B-Instruct:featherless-ai
+  llama-3.2-3b:
+    provider: huggingface
+    api_model_name: meta-llama/Llama-3.2-3B-Instruct:featherless-ai
+  mistral-nemo-12b:
+    provider: openrouter
+    api_model_name: mistralai/mistral-nemo
+  mistralai/ministral-3b-2512:
+    provider: openrouter
+    api_model_name: mistralai/ministral-3b-2512

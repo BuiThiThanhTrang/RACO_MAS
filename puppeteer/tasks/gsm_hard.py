@@ -1,14 +1,15 @@
 import os
 import json
-import pandas as pd
 from tqdm import tqdm
-from tasks.base.base_task import BaseTask
 
-def load_dataset(mode, data_limit=None):
-    path = os.path.join("data", "GSM-Hard", "test.parquet")
-    data = pd.read_parquet(path)
-    data = data.sample(frac=1).reset_index(drop=True)
-    return data[:data_limit] if data_limit else data
+from tasks.splits import load_split_frame
+
+
+def load_dataset(mode, data_limit=None, seed=42):
+    data = load_split_frame("gsm_hard", mode, seed=seed)
+    if data_limit is not None:
+        data = data.iloc[:data_limit]
+    return data
 
 def format_question(row, idx):
     return {
@@ -18,8 +19,8 @@ def format_question(row, idx):
         "id": idx
     }
 
-def run(runner, evaluator, results_dir, mode, data_limit=None):
-    dataset = load_dataset(mode, data_limit)
+def run(runner, evaluator, results_dir, mode, data_limit=None, seed=42):
+    dataset = load_dataset(mode, data_limit, seed=seed)
     result_path = os.path.join(results_dir, "gsm-hard.jsonl")
     acc = 0
 

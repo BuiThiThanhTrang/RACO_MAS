@@ -6,6 +6,8 @@ from tools.utils.broswer import SimpleTextBrowser
 import signal
 from functools import wraps
 
+_HAS_POSIX_ALARM = hasattr(signal, "SIGALRM") and hasattr(signal, "alarm")
+
 def timeout_handler(signum, frame):
     raise TimeoutError("Request timed out")
 
@@ -13,6 +15,8 @@ def timeout(seconds=1):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            if not _HAS_POSIX_ALARM:
+                return func(*args, **kwargs)
             # Set the signal handler
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(seconds)
@@ -62,26 +66,15 @@ class arXiv_SearchEngine(Web_Search):
         self.name = name
 
     def search(self, query):
-        # Custom timeout
-        timeout = 10  # Timeout in seconds
-
-        # Create a custom session with a timeout
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(timeout=timeout)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-
         try:
-            # Perform the search with custom session
             search = arxiv.Search(
                 query=query,
                 max_results=5,
                 sort_by=arxiv.SortCriterion.Relevance,
-                session=session  # Use the session with timeout
             )
             
             results = []
-            for result in search.results():
+            for result in arxiv.Client().results(search):
                 result_info = {
                     "title": result.title,
                     "authors": ", ".join(author.name for author in result.authors),

@@ -1,0 +1,146 @@
+[
+  {
+    "id": "arithmetic_good",
+    "pair": "arithmetic",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is 1+1?"
+      },
+      {
+        "role": "assistant",
+        "content": "1+1=2"
+      }
+    ]
+  },
+  {
+    "id": "arithmetic_bad",
+    "pair": "arithmetic",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is 1+1?"
+      },
+      {
+        "role": "assistant",
+        "content": "1+1=3"
+      }
+    ]
+  },
+  {
+    "id": "python_good",
+    "pair": "python",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What does len([10, 20, 30]) return in Python?"
+      },
+      {
+        "role": "assistant",
+        "content": "It returns 3."
+      }
+    ]
+  },
+  {
+    "id": "python_bad",
+    "pair": "python",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What does len([10, 20, 30]) return in Python?"
+      },
+      {
+        "role": "assistant",
+        "content": "It returns 2."
+      }
+    ]
+  },
+  {
+    "id": "reasoning_good",
+    "pair": "reasoning",
+    "messages": [
+      {
+        "role": "user",
+        "content": "All squares are rectangles. Is every rectangle a square?"
+      },
+      {
+        "role": "assistant",
+        "content": "No. A rectangle need not have four equal sides."
+      }
+    ]
+  },
+  {
+    "id": "reasoning_bad",
+    "pair": "reasoning",
+    "messages": [
+      {
+        "role": "user",
+        "content": "All squares are rectangles. Is every rectangle a square?"
+      },
+      {
+        "role": "assistant",
+        "content": "Yes. Every rectangle must have four equal sides."
+      }
+    ]
+  },
+  {
+    "id": "initial_system",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are an assistant. Your task is to solve a math problem."
+      }
+    ]
+  },
+  {
+    "id": "multi_turn",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Be concise."
+      },
+      {
+        "role": "user",
+        "content": "What is 2+2?"
+      },
+      {
+        "role": "assistant",
+        "content": "4."
+      },
+      {
+        "role": "user",
+        "content": "Multiply that by three."
+      },
+      {
+        "role": "assistant",
+        "content": "12."
+      }
+    ]
+  },
+  {
+    "id": "unicode",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Explain what the Vietnamese word \"mèo\" means."
+      },
+      {
+        "role": "assistant",
+        "content": "It means cat."
+      }
+    ]
+  },
+  {
+    "id": "long",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Record: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nRecord: the value is 7.\nSummarize the recorded value."
+      },
+      {
+        "role": "assistant",
+        "content": "The recorded value is 7."
+      }
+    ]
+  }
+]

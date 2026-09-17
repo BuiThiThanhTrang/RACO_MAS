@@ -2,24 +2,28 @@ import os
 import json
 from tqdm import tqdm
 
-def load_dataset(data_limit=None):
-    path = "./data/CW/creative_writing.jsonl"
-    with open(path, "r", encoding="utf-8") as f:
-        data = [json.loads(line) for line in f]
-    return data[:data_limit] if data_limit else data
+from tasks.splits import load_split_frame
+
+
+def load_dataset(mode, data_limit=None, seed=42):
+    data = load_split_frame("cw", mode, seed=seed)
+    if data_limit is not None:
+        data = data.iloc[:data_limit]
+    return data.to_dict("records")
 
 def format_question(q, idx):
     question = "Concepts: " + ", ".join(q["concepts"]) + \
                "\nGenerate a sentence including all key concepts, grammatically correct and coherent."
     return {
         "type": "CW",
+        "req": "text",
         "Question": question,
         "id": idx,
         "concepts": q["concepts"]
     }
 
-def run(runner, evaluator, results_dir, mode, data_limit=None):
-    dataset = load_dataset(data_limit)
+def run(runner, evaluator, results_dir, mode, data_limit=None, seed=42):
+    dataset = load_dataset(mode, data_limit, seed=seed)
     result_path = os.path.join(results_dir, "cw.jsonl")
 
     with open(result_path, "w", encoding="utf-8") as fd:

@@ -1,0 +1,11 @@
+{
+  "model_id": "nvidia/Llama-3.1-Nemotron-70B-Reward-HF",
+  "model_revision": "5e30252d2621dcb792837817ed33aefd87910136",
+  "gguf_repo": "mradermacher/Llama-3.1-Nemotron-70B-Reward-HF-GGUF",
+  "gguf_revision": "7247ef33e770e828860a1d1662fe85a9bfdec060",
+  "gguf_filename": "Llama-3.1-Nemotron-70B-Reward-HF.Q5_K_M.gguf",
+  "gguf_bytes": 49949818016,
+  "gguf_sha256": "1943b37698222e4db58eab5b38cd1ce5d639ac57c50980b579b7ff1d563573f4",
+  "quantization": "Q5_K_M",
+  "llama_cpp_python": "0.3.16"
+}

@@ -1,5 +1,5 @@
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 @dataclass
 class ModelConfig:
@@ -34,21 +34,37 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         max_tokens=128000,
         description="OpenAI GPT-4o model"
     ),
+    "qwen-2.5-7b": ModelConfig(
+        "qwen-2.5-7b", "query_qwen2_5_7b", "Qwen/Qwen2.5-7B-Instruct:featherless-ai",
+        "huggingface", 4096, 7),
     "qwen-2.5-14b": ModelConfig(
-        name = "qwen-2.5-14b",
-        function_name="query_qwen2_5_14b",
-        api_model_name="Qwen/Qwen2.5-14B-Instruct",
-        provider="local",
-        model_size=14,
-        max_tokens=8192,    
-        url="http://",
-        description="Qwen 2.5 14B Instruct model deployed locally"
-    ),
+        "qwen-2.5-14b", "query_qwen2_5_14b", "Qwen/Qwen2.5-14B-Instruct:featherless-ai",
+        "huggingface", 4096, 14),
+    "llama-3.1-8b": ModelConfig(
+        "llama-3.1-8b", "query_llama3_1_8b", "meta-llama/Llama-3.1-8B-Instruct:featherless-ai",
+        "huggingface", 4096, 8),
+    "llama-3.2-3b": ModelConfig(
+        "llama-3.2-3b", "query_llama3_2_3b", "meta-llama/Llama-3.2-3B-Instruct:featherless-ai",
+        "huggingface", 4096, 3),
+    "mistral-nemo-12b": ModelConfig(
+        "mistral-nemo-12b", "query_mistral_nemo", "mistralai/mistral-nemo",
+        "openrouter", 4096, 12),
+    "mistralai/ministral-3b-2512": ModelConfig(
+        "mistralai/ministral-3b-2512", "query_ministral_3b", "mistralai/ministral-3b-2512",
+        "openrouter", 4096, 3),
 }
 
 class ModelRegistry:
     def __init__(self):
         self.registry = MODEL_REGISTRY.copy()
+        from pathlib import Path
+        import yaml
+        path = Path("config/global.yaml")
+        settings = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}) if path.exists() else {}
+        for alias, override in (settings.get("agent_models") or {}).items():
+            if alias not in self.registry:
+                raise ValueError(f"Unknown agent model alias in config: {alias}")
+            self.registry[alias] = replace(self.registry[alias], **override)
     
     def register_model(self, key: str, config: ModelConfig) -> None:
         self.registry[key] = config

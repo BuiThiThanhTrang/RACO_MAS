@@ -6,6 +6,7 @@ import os
 import shutil
 from abc import ABC, abstractmethod
 import subprocess
+import sys
 from subprocess import check_output
 import time
 import signal
@@ -85,14 +86,13 @@ class PythonInterpreter(CodeInterpreter):
             if len(file_path) > 0:
                 self.move_file(src_path=file_path, dest_path=work_path)
 
-            # Determine the command to run based on the operating system
+            # Use the same interpreter as Puppeteer, even with nested environments.
+            command = [sys.executable, "-X", "utf8", os.path.basename(code_path)]
             if os.name == 'nt':  # Windows
-                command = f"cd {work_path} && python agent-main.py"
-                process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                process = subprocess.Popen(command, cwd=work_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
             else:  # Linux/macOS
-                command = f"cd {work_path} && python3 agent-main.py"
-                process = subprocess.Popen(command, shell=True, preexec_fn=os.setsid, stdout=subprocess.PIPE,
+                process = subprocess.Popen(command, cwd=work_path, preexec_fn=os.setsid, stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE)
 
             try:
@@ -100,10 +100,7 @@ class PythonInterpreter(CodeInterpreter):
                 out, err = process.communicate(timeout=10)
             except subprocess.TimeoutExpired:
                 self.robust_kill(process)
-                if self.timeout_detected:
-                    return False, "The process timed out after 10 seconds."
-                else:
-                    return True, "The process completes without encountering any errors."
+                return False, "The process timed out after 10 seconds."
 
             return_code = process.returncode
             output = out.decode('utf-8', errors='ignore')

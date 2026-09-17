@@ -61,7 +61,7 @@ class AgentGraph(Graph):
     def agent_prompt(self):
         agent_prompt = []
         for agent in self._nodes:
-            if agent.role != "TerminatorAgent":
+            if "terminate" not in agent.actions:
                 agent_prompt.append(f"Agent {agent.role} using model {agent.model}' hash: {agent.hash}")
         agent_prompt = "\n".join(agent_prompt)
         return agent_prompt
@@ -69,7 +69,7 @@ class AgentGraph(Graph):
     @property
     def terminator_agent_index(self):
         for agent in self._nodes:
-            if agent.role == "TerminatorAgent":
+            if "terminate" in agent.actions:
                 return agent.index
         return None
     
@@ -77,7 +77,7 @@ class AgentGraph(Graph):
     def search_agent_indices(self):
         indices = []
         for agent in self._nodes:
-            if agent.role == "WebsiteAgent" or agent.role == "BingAgent" or agent.role == "ArxivAgent":
+            if any(action in {"access_website", "search_bing", "search_arxiv"} for action in agent.actions):
                 indices.append(agent.index)
         return indices
     

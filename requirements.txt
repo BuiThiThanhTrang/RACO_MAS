@@ -9,7 +9,7 @@ pyarrow
 mammoth==1.8.0
 markdownify==0.13.1
 networkx==3.2.1
-numpy==2.3.2
+numpy==1.26.4
 openai==1.107.0
 openai_whisper
 opencv_python_headless==4.10.0.84
@@ -31,5 +31,4 @@ tenacity==9.0.0
 torch==2.4.0
 tqdm==4.66.5
 transformers==4.43.4
-whisper==1.1.10
 youtube_transcript_api==0.6.2

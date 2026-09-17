@@ -1,22 +1,26 @@
 import os
-import pandas as pd
 from tqdm import tqdm
 import json
 
-def load_dataset(data_limit=None):
-    data = pd.read_csv("./data/SRDD/SRDD.csv")
-    data = data.sample(frac=1).reset_index(drop=True)
-    return data[:data_limit] if data_limit else data
+from tasks.splits import load_split_frame
+
+
+def load_dataset(mode, data_limit=None, seed=42):
+    data = load_split_frame("srdd", mode, seed=seed)
+    if data_limit is not None:
+        data = data.iloc[:data_limit]
+    return data
 
 def format_question(row, idx):
     return {
         "type": "SRDD",
+        "req": "code",
         "Question": "Develop a pythonic software following description:\n" + row["Description"],
         "id": idx
     }
 
-def run(runner, evaluator, results_dir, mode, data_limit=None):
-    dataset = load_dataset(data_limit)
+def run(runner, evaluator, results_dir, mode, data_limit=None, seed=42):
+    dataset = load_dataset(mode, data_limit, seed=seed)
     result_path = os.path.join(results_dir, "srdd.jsonl")
 
     with open(result_path, "w", encoding="utf-8") as fd:

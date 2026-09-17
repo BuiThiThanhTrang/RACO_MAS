@@ -3,6 +3,8 @@ from functools import wraps
 import signal
 import logging
 
+_HAS_POSIX_ALARM = hasattr(signal, "SIGALRM") and hasattr(signal, "alarm")
+
 class Tool(ABC):
     def __init__(self, name, description, execute_function, timeout_duration=1, **kwargs):
         super().__init__()
@@ -10,7 +12,8 @@ class Tool(ABC):
         self.description = description
         self.execute_function = execute_function
         self.timeout_duration = timeout_duration
-        signal.alarm(0)
+        if _HAS_POSIX_ALARM:
+            signal.alarm(0)
 
     def timeout_handler(self, signum, frame):
         raise TimeoutError(f"Tool execution timed out after {self.timeout_duration} seconds")
@@ -18,6 +21,10 @@ class Tool(ABC):
     def with_timeout(self, func):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            # Windows does not expose SIGALRM/alarm. Individual network and
+            # subprocess tools already enforce their own request/process timeout.
+            if not _HAS_POSIX_ALARM:
+                return func(*args, **kwargs)
             original_handler = signal.signal(signal.SIGALRM, self.timeout_handler)
             signal.alarm(self.timeout_duration)
             try:

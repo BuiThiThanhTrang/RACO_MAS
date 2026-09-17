@@ -10,20 +10,13 @@ class ModelQueryManager:
         self.registry = model_registry
         self.config_manager = api_config
         self.clients = {}
-        self._setup_clients()
-    
-    def _setup_clients(self):
-        from openai import OpenAI
-        for key, config in self.registry.get_all_models().items():
-            # set up client for openai models
-            if config.provider == "openai" and config.url is None:
-                api_key = self.config_manager.get("openai").get("openai_api_key", None)
-                base_url = self.config_manager.get("openai").get("openai_base_url", None)
-                self.clients[key] = OpenAI(api_key=api_key, base_url=base_url)
-            # set up client for local models
-            elif config.url:
-                self.clients[key] = OpenAI(api_key="none", base_url=config.url)
-    
+        # Resolve credentials only for a model that is actually called.
+
+    def _client_for(self, config):
+        if config.name not in self.clients:
+            self.clients[config.name] = self.config_manager.create_client(config.provider, config.url)
+        return self.clients[config.name]
+
     def query(self, model_key: str, messages: List[Dict[str, str]], 
               system_prompt: Optional[str] = None) -> Tuple[str, int]:
         config = self.registry.get_model_config(model_key)
@@ -54,7 +47,7 @@ class ModelQueryManager:
         response, total_tokens = chat_completion_request(
             messages=messages,
             model=config.api_model_name,  
-            new_client=self.clients.get(config.name),
+            new_client=self._client_for(config),
             model_config_dict=model_config_dict
         )
         

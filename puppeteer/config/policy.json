@@ -1,13 +1,13 @@
 {
     "device": {
-        "type": "cuda"
+        "type": "cpu"
     },
     "paths": {
-        "checkpoint_path": "checkpoint/MMLU-Pro_test",
-        "model_path": "checkpoint/gsm-hard_validation/policy_net_20250414_105845.pt"
+        "checkpoint_path": "checkpoint/MMLU-Pro_train",
+        "model_path": "D:\\SideProject\\chatdev_original\\ChatDev\\puppeteer\\checkpoint\\MMLU-Pro_train\\policy_net_20260915_105454.pt"
     },
     "training": {
-        "loading": false,
+        "loading": true,
         "training": true,
         "learning_rate": 0.0001,
         "sample_size": 1,
@@ -52,5 +52,7 @@
                 10
             ]
         }
-    }
+    },
+    "dataset_name": "MMLU-Pro",
+    "dataset_mode": "train"
 }
