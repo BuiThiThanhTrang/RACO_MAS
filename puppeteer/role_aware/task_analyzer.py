@@ -4,6 +4,7 @@ import os
 from typing import Iterable
 
 import torch
+from role_aware.audit_trace import observe_provider_call
 
 
 class TaskAnalyzerRepresentation:
@@ -69,7 +70,7 @@ class TaskAnalyzerRepresentation:
 
             from openai import OpenAI
 
-            self._client = OpenAI(base_url=base_url, api_key=api_key)
+            self._client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0)
             self._active_config = backend_config
             self.dim = int(backend_config.get("dim", 1024))
             self._backend = name
@@ -83,10 +84,11 @@ class TaskAnalyzerRepresentation:
         self._load()
         text = self._text(messages)
 
-        response = self._client.embeddings.create(
-            model=self._active_config.get("model", "BAAI/bge-large-en-v1.5"),
-            input=[text],
-            dimensions=self.dim,
-            encoding_format="float",
-        )
+        model = self._active_config.get("model", "BAAI/bge-large-en-v1.5")
+        with observe_provider_call(text, model) as receipt:
+            response = self._client.embeddings.create(
+                model=model, input=[text], dimensions=self.dim, encoding_format="float")
+            usage = getattr(response, "usage", None)
+            receipt["tokens"] = getattr(usage, "total_tokens", None)
+            receipt["usage_source"] = "provider" if receipt["tokens"] is not None else "unavailable"
         return torch.tensor([response.data[0].embedding], dtype=torch.float32), 0.0

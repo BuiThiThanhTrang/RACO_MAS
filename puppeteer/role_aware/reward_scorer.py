@@ -136,15 +136,20 @@ class AuxiliaryRewardScorer:
         last_error = None
         for attempt in range(self.max_retries):
             try:
-                response = requests.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=self.timeout_seconds,
-                )
-                response.raise_for_status()
-                data = response.json()
-                return self._validated_score(data["score"])
+                from role_aware.audit_trace import observe_provider_call
+                with observe_provider_call(messages, self.model_name) as receipt:
+                    response = requests.post(
+                        url,
+                        headers=headers,
+                        json=payload,
+                        timeout=self.timeout_seconds,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    usage = data.get("usage") or {}
+                    receipt["tokens"] = usage.get("total_tokens")
+                    receipt["usage_source"] = "provider" if receipt["tokens"] is not None else "unavailable"
+                    return self._validated_score(data["score"])
             except (
                 requests.RequestException,
                 KeyError,

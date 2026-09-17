@@ -1,4 +1,8 @@
 from typing import List
+from pathlib import Path
+from contextlib import nullcontext
+from role_aware.audit_trace import AuditTrace, digest, redact
+from role_aware.aggregation import aggregate_candidates, normalize_choice
 import json
 import os
 import copy
@@ -18,7 +22,7 @@ from role_aware.evidence import PathTerminalEvidence
 main_logger = logging.getLogger('global')
 
 class GraphReasoning:
-    def __init__(self, task:json, graph: AgentGraph, policy, action_graph, max_parallel_paths, max_step_num, runtime_config, registry, profile_evidence=None, external_tools_enabled=False, env=None, env_name=None):
+    def __init__(self, task:json, graph: AgentGraph, policy, action_graph, max_parallel_paths, max_step_num, runtime_config, registry, profile_evidence=None, external_tools_enabled=False, env=None, env_name=None, audit=None):
         self.task = task
         self.runtime_config = copy.deepcopy(dict(runtime_config))
         self.agent_graph = graph
@@ -33,7 +37,10 @@ class GraphReasoning:
         self.final_answer = ""
         self.answers = []
 
-        self.global_logger = LogManager("./config/global.yaml", self.task.get("type"))
+        self.global_logger = LogManager("./config/global.yaml", self.task.get("type"),
+                                        folder_path=audit.directory if audit else None)
+        self.audit = audit or AuditTrace(self.global_logger.folder_path, "standalone",
+                                        task.get("id", "unknown"), "attempt-1", enabled=False)
 
         self.workspace_path = self.global_logger.folder_path
         self.policy = policy
@@ -43,7 +50,7 @@ class GraphReasoning:
         self.env = env
         self.env_name = env_name
         main_logger.info("{}[Graph Reasoning Initialized]{}".format("-"*30, "-"*30))
-        main_logger.info(self.runtime_config)
+        main_logger.info(redact(self.runtime_config))
         main_logger.info(self.agent_graph.role_nodes)
 
     def save_checkpoint(self, save_data):
@@ -55,88 +62,121 @@ class GraphReasoning:
         self.policy.save_model(path=None, tag=tag)
 
     def start(self, save_data):
-        if save_data != None:
+        if save_data is not None:
             self.save_checkpoint(save_data)
-        print("-"*10+"\033[1;31mGraph Reasoning Start\033[0m"+"-"*10)
-        main_logger.info("{}[Graph Reasoning Start]{}".format("-"*30, "-"*30))
-        main_logger.info("Task:\n{}".format(self.task.get("Question")))
+        if hasattr(self.policy, "begin_task"):
+            self.policy.begin_task(self.audit)
+        self.audit.emit("task_started", split=self.runtime_config.get("audit_split", "unknown"),
+                        max_width=self.max_parallel_paths, max_depth=self.max_step_num)
+        try:
+            self._route(None)
+        except BaseException as error:
+            if hasattr(self.policy, "abort_task"):
+                self.policy.abort_task()
+            self.audit.emit("task_interrupted", error_type=type(error).__name__)
+            raise
 
-        # -1 is the default path id for intialization
-        global_info = GlobalInfo(path_id=-1,
-                                    workpath=self.workspace_path,
-                                    task=self.task,
-                                    env=self.env,
-                                    env_name=self.env_name)
-        matches = self.policy.forward(global_info)
+    def _new_info(self, index):
+        public_task = {k: v for k, v in self.task.items() if k not in {"Answer", "answer", "target"}}
+        info = GlobalInfo(path_id=index, workpath=self.workspace_path, task=public_task,
+                          env=self.env, env_name=self.env_name)
+        info.audit_split = self.runtime_config.get("audit_split", "unknown")
+        return info
 
-        for index, match in enumerate(matches):
-            global_info = GlobalInfo(path_id=index,
-                                    workpath=self.workspace_path,
-                                    task=self.task,
-                                    env=self.env,
-                                    env_name=self.env_name)
-            agent = self.registry.get_agent_from_idx(match)
-            agent.activate(global_info)
-            main_logger.info("[Path {} Initialized".format(index))
-            print("\033[1;36mPath {} Initialized\033[0m".format(index))
+    def _route(self, path):
+        capacity = self.max_parallel_paths - len(self.reasoning_paths) + (1 if path else 0)
+        if capacity < 1:
+            raise RuntimeError("No capacity reserved for current path")
+        info = path.global_info if path else self._new_info(-1)
+        info.remaining_depth = self.max_step_num - (path.completed_steps if path else 0)
+        info.path_uid = path.path_uid if path else "root"
+        if hasattr(self.policy, "propose"):
+            proposal = self.policy.propose(info, capacity)
+        else:
+            proposal = dict(decision_id=self.audit.new_id("decision"), actions=self.policy.forward(info))
+            self.audit.emit("routing_decision", decision_id=proposal["decision_id"],
+                            path_uid=info.path_uid, mode="fixed", p_stop=None,
+                            selected=proposal["actions"], capacity=capacity)
+        decision_id = proposal["decision_id"]
+        requested = proposal["actions"]
+        stop = "__orchestrator_stop__"
+        if stop in requested and (not path or requested != [stop]):
+            raise RuntimeError("STOP must be a sole action on an existing path")
+        accepted = requested[:capacity]
+        invalid = [a for a in accepted if a != stop and self.registry.get_agent_from_idx(a) is None]
+        if invalid or not accepted:
+            self.audit.emit("allocation", decision_id=decision_id, accepted=[], rejected=requested,
+                            reason="no_valid_agent", path_uid=info.path_uid)
+            if path:
+                path.finish("no_valid_agent")
+            raise RuntimeError("Router returned unavailable/empty action")
+        allocations = []
+        new_paths = []
+        for slot, action in enumerate(accepted):
+            action_id = self.audit.new_id("action")
+            if slot == 0 and path:
+                target = path
+            else:
+                uid = self.audit.new_id("path")
+                index = len(self.reasoning_paths) + len(new_paths)
+                agent = self.registry.get_agent_from_idx(action)
+                if path:
+                    target = path.fork(index, uid, agent, self.workspace_path)
+                else:
+                    target = GraphReasoningPath(agent, self.max_parallel_paths, self.global_logger,
+                        self.workspace_path, self.action_graph, self.registry, index=index,
+                        global_info=self._new_info(index), policy=self.policy, max_step_num=self.max_step_num,
+                        external_tools_enabled=self.external_tools_enabled, env=self.env, env_name=self.env_name,
+                        audit=self.audit, path_uid=uid)
+                    target.emit("path_created", inherited_steps=0, inherited_action_ids=[])
+                new_paths.append(target)
+            allocations.append(dict(path_uid=target.path_uid, action=action, action_id=action_id))
+        self.reasoning_paths.extend(new_paths)
+        if hasattr(self.policy, "accept"):
+            self.policy.accept(proposal, info.path_uid, allocations)
+        self.audit.emit("allocation", decision_id=decision_id, path_uid=info.path_uid,
+                        accepted=allocations, rejected=requested[capacity:],
+                        reason="reserved_capacity", capacity=capacity)
+        by_uid = {p.path_uid: p for p in self.reasoning_paths}
+        for allocation in allocations:
+            target = by_uid[allocation["path_uid"]]
+            if allocation["action"] == stop:
+                self.audit.emit("action_finished", path_uid=target.path_uid,
+                                action_id=allocation["action_id"], decision_id=decision_id,
+                                status="stop", tokens=0, model_cost=0)
+                probs = proposal.get("probs")
+                target.finish("policy_stop", decision_id,
+                              float(probs[0, -1].detach()) if probs is not None else None)
+            else:
+                target.reserve(self.registry.get_agent_from_idx(allocation["action"]),
+                               allocation["action_id"], decision_id)
 
-            reasoning_path = GraphReasoningPath(start_agent=agent,
-                                                max_parallel_paths=self.max_parallel_paths,
-                                                action_graph=self.action_graph,
-                                                registry=self.registry,
-                                                agent_sequence=[],
-                                                index=index,
-                                                global_info = copy.deepcopy(global_info),
-                                                global_logger = self.global_logger,
-                                                workspace_path=self.workspace_path,
-                                                state=copy.deepcopy(ReasoningState.INITIALIZED),
-                                                env=self.env,
-                                                env_name=self.env_name,
-                                                policy=self.policy,
-                                                max_step_num=self.max_step_num,
-                                                external_tools_enabled=self.external_tools_enabled,
-                                                )
-            self.reasoning_paths.append(reasoning_path)
-            main_logger.info("Reasoning Path: {}\nAgent Sequence: {}\n".format(index, reasoning_path.print_agent_sequence()))
-
-    def n_step(self, n:int):
-        for i in range(n):
-            self.step()
-            if self.check_finalize():
-                break
-        return self.finalize()
+    def n_step(self, n):
+        try:
+            for _ in range(n):
+                self.step()
+                if self.check_finalize():
+                    break
+            if not self.check_finalize():
+                raise RuntimeError("Runtime step budget exhausted with pending actions")
+            return self.finalize()
+        except BaseException as error:
+            for path in self.reasoning_paths:
+                path.finish("cancelled" if isinstance(error, (KeyboardInterrupt, SystemExit)) else "execution_error")
+            if hasattr(self.policy, "abort_task"):
+                self.policy.abort_task()
+            self.audit.emit("task_interrupted", error_type=type(error).__name__)
+            raise
 
     def step(self):
-        main_logger.info("{}[STEP]{}".format("-"*30, "-"*30))
-
-        for reasoning_path in self.reasoning_paths[:self.max_parallel_paths]:
-            # Deal with the case where the reasoning path is not finalizing and not spliting
-            if reasoning_path.state != ReasoningState.FINALIZING and reasoning_path.state != ReasoningState.SPLITING:
-                main_logger.info("{}[Reasoning Path{} STEP]{}".format("-"*30, reasoning_path.index, "-"*30))
-                print("\033[1;36mPath {} Step\033[0m".format(reasoning_path.index))
-                reasoning_path.step()
-                main_logger.info("{}[DONE]: Reasoning Path{} STEP{}".format("-"*30, reasoning_path.index, "-"*30))
-
-        buffer_reasoning_paths = []
-        for reasoning_path in self.reasoning_paths[:self.max_parallel_paths]:
-            # Deal with the case where the reasoning path is spliting
-            if reasoning_path.state == ReasoningState.SPLITING :
-                current_path_count = len(self.reasoning_paths) + len(buffer_reasoning_paths)
-                print("\033[1;36mPath {} Split\033[0m".format(reasoning_path.index))
-                split_reasoning_paths = reasoning_path.split(current_path_count)
-                if len(split_reasoning_paths) > 0:
-                    main_logger.info("Split Reasoning Paths: {} From Path {}".format([path.index for path in split_reasoning_paths], reasoning_path.index))
-                buffer_reasoning_paths.extend(split_reasoning_paths)
-            # Deal with the case where the reasoning path is finalizing
-            elif reasoning_path.state == ReasoningState.FINALIZING:
-                print("\033[1;36mPath {} Finalize\033[0m".format(reasoning_path.index))
-                main_logger.info("{}[Reasoning Path{} FINALIZING]{}".format("-"*30, reasoning_path.index, "-"*30))
-        print(p for p in self.reasoning_paths)
-        self.reasoning_paths.extend(buffer_reasoning_paths)
-        self.format_index()
-        self.print_paths()
+        # Reserve/allocate immediately after each step; later paths see remaining capacity.
+        for path in list(self.reasoning_paths):
+            if path.stop_reason:
+                continue
+            path.step()
+            if not path.stop_reason:
+                self._route(path)
         self.update_graph()
-
         return self.answers
 
     def aggregate_answers(self, global_info, answers:list, query_func=None) -> str:
@@ -220,13 +260,68 @@ class GraphReasoning:
         return most_common[-1]
 
     def finalize(self):
-        print("-"*10+"\033[1;31mGraph Reasoning Finalize\033[0m"+"-"*10)
-        print(p for p in self.reasoning_paths)
-        for idx, reasoning_path in enumerate(self.reasoning_paths):
-            if hasattr(reasoning_path, "last_query_func"):
-                aggregated_answer = self.aggregate_answers(reasoning_path.global_info, reasoning_path.global_info.state_answers, reasoning_path.last_query_func)
-            else:
-                aggregated_answer = self.aggregate_answers(reasoning_path.global_info, reasoning_path.global_info.state_answers)
+        candidates = []
+        records = []
+        from model.model_config import model_registry
+        for path in self.reasoning_paths:
+            info = path.global_info
+            before = info.state_answers[-1] if info.state_answers else None
+            agent = getattr(path, "last_agent", None)
+            query_func = getattr(path, "last_query_func", None)
+            with self.audit.call_scope(path_uid=path.path_uid, purpose="path_aggregation",
+                                       model_size=(model_registry.get_model_size(agent.model) or 0) if agent else 0):
+                prediction = self.aggregate_answers(info, info.state_answers, query_func)
+            raw_prediction = prediction
+            if self.task.get("type") in {"MMLU", "MMLU-Pro"} and self.runtime_config.get("aggregation", {}).get("mode", "legacy") != "legacy":
+                prediction = normalize_choice(prediction, self.task.get("choices", "ABCDEFGHIJ")) or ""
+            candidates.append(raw_prediction)
+            record = dict(path_uid=path.path_uid, parent_path_uid=path.parent_path_uid,
+                          before_aggregation=before, raw_prediction=raw_prediction,
+                          prediction=prediction, stop_reason=path.stop_reason,
+                          steps=[a.to_dict() for a in info.workflow.workflow])
+            records.append(record)
+            self.audit.emit("path_aggregation", **record)
+        self.answers = [v for v in candidates if v is not None]
+        aggregation_config = self.runtime_config.get("aggregation", {})
+        if self.task.get("type") in {"MMLU", "MMLU-Pro"}:
+            mode = aggregation_config.get("mode", "legacy")
+            verifier = None
+            if mode == "majority_verifier":
+                model = aggregation_config.get("verifier_model")
+                if not model:
+                    raise ValueError("aggregation.verifier_model is required")
+                from model.query_manager import query_manager
+                def verifier(prompt):
+                    with self.audit.call_scope(path_uid="task", purpose="tie_verifier",
+                                               model_size=model_registry.get_model_size(model) or 0):
+                        return query_manager.query(model, prompt)
+            aggregation = aggregate_candidates(candidates, mode=mode,
+                choices=self.task.get("choices", "ABCDEFGHIJ"),
+                seed=int(aggregation_config.get("seed", 42)),
+                task_id=str(self.task.get("id", "")), question=self.task.get("Question", ""), verifier=verifier)
+            self.final_answer = aggregation["prediction"]
+            if mode == "legacy" and len(self.answers) == 1:
+                self.final_answer = self.answers[0]
+                aggregation["prediction"] = self.final_answer
+        elif len(self.answers) <= 1 or self.task.get("type") in {"CW", "SRDD"}:
+            self.final_answer = self.answers[-1] if self.answers else ""
+            aggregation = dict(mode="last_artifact", prediction=self.final_answer)
+        else:
+            self.final_answer = self.majority_vote(self.answers)
+            aggregation = dict(mode="legacy", prediction=self.final_answer)
+        self.audit.emit("aggregation", **aggregation)
+        snapshot = dict(**self.audit.context, split=self.runtime_config.get("audit_split", "unknown"),
+                        question=self.task.get("Question", ""), choices=self.task.get("choices", "ABCDEFGHIJ"),
+                        paths=records, candidates=candidates, candidate_hash=digest(candidates),
+                        aggregation=aggregation, prediction=self.final_answer,
+                        cost=self.audit.call_totals())
+        self.audit.save("candidates.json", snapshot)
+        self.audit.emit("prediction_committed", prediction=self.final_answer,
+                        candidate_hash=snapshot["candidate_hash"])
+        evaluations = []
+        for idx, (reasoning_path, aggregated_answer) in enumerate(zip(self.reasoning_paths, candidates)):
+            if self.task.get("type") in {"MMLU", "MMLU-Pro"} and aggregation_config.get("mode", "legacy") != "legacy":
+                aggregated_answer = normalize_choice(aggregated_answer, self.task.get("choices", "ABCDEFGHIJ")) or ""
             if self.task.get("type") == "MMLU-Pro":
                 transition = {
                 'state': reasoning_path.global_info.workflow.state,
@@ -238,6 +333,7 @@ class GraphReasoning:
                 'candidate_output': aggregated_answer,
                 }
                 print(transition)
+                transition["path_uid"] = reasoning_path.path_uid
                 self.policy.finalize_task(transition, reasoning_path.global_info)
             elif self.task.get("type") == "GSM-Hard":
                 transition = {
@@ -250,6 +346,7 @@ class GraphReasoning:
                 'candidate_output': aggregated_answer,
                 }
                 print(transition)
+                transition["path_uid"] = reasoning_path.path_uid
                 self.policy.finalize_task(transition, reasoning_path.global_info)
 
             elif self.task.get("type") == "SRDD":
@@ -265,6 +362,7 @@ class GraphReasoning:
                 "metrics":metrics
                 }
                 main_logger.info(metrics)
+                transition["path_uid"] = reasoning_path.path_uid
                 self.policy.finalize_task(transition, reasoning_path.global_info)
             elif self.task.get("type") == "CW":
                 reward, metrics = BenchmarkEvaluator.check_commongen(concepts=reasoning_path.global_info.task.get("concepts"), text_path=aggregated_answer)
@@ -279,6 +377,7 @@ class GraphReasoning:
                 "metrics":metrics
                 }
                 main_logger.info(metrics)
+                transition["path_uid"] = reasoning_path.path_uid
                 self.policy.finalize_task(transition, reasoning_path.global_info)
             if self.profile_evidence is not None:
                 task_type = self.task.get("type")
@@ -306,27 +405,18 @@ class GraphReasoning:
                         role_adherence=reasoning_path.role_adherence,
                     )
                 )
-            if aggregated_answer is not None:
-                self.answers.append(aggregated_answer)
-                main_logger.info("[Aggregated Answer From Path {}]: {}".format(idx, aggregated_answer))
-        self.policy.update()
+
+            evaluations.append(dict(path_uid=reasoning_path.path_uid, task_reward=transition["reward"],
+                                    prediction=aggregated_answer))
+        metrics = self.policy.update()
         if self.profile_evidence is not None:
             self.profile_evidence.flush_task(str(self.task.get("id")))
-
         for agent in self.registry.ordered_agents:
             agent.reset()
-
-        if len(self.answers) == 1 or self.task.get("type") == "SRDD" or self.task.get("type") == "CW":
-            if len(self.answers) == 0:
-                self.final_answer = ""
-            else:
-                self.final_answer = self.answers[-1]
-        else:
-            self.final_answer = self.majority_vote(self.answers)
-
-        main_logger.info("[Final Answer]: {}".format(self.final_answer))
-        print("-"*10+"\033[1;31mGraph Reasoning Finalized\033[0m"+"-"*10)
-
+        self.audit.save("evaluation.json", dict(**self.audit.context, gold=self.task.get("Answer"),
+                         paths=evaluations, prediction=self.final_answer, policy_update=metrics))
+        self.audit.emit("task_finished", prediction=self.final_answer, **self.audit.call_totals())
+        main_logger.info("[Final Answer]: %s", self.final_answer)
         return self.final_answer, self.task.get("Answer")
 
     def visualize_path(self):

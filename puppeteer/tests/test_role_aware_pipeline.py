@@ -215,6 +215,7 @@ class RoleAwarePipelineTests(unittest.TestCase):
         policy.agent_hash_list = [f"agent-{index}" for index in range(4)]
         policy.agent_graph = SimpleNamespace(availability_mask=[True, False, True, True])
         policy.max_width = 4
+        policy.threshold_multiplier = 1.0
         policy.device = torch.device("cpu")
         selected, _ = policy._choose(
             torch.tensor([[1 / 3, 0.0, 1 / 3, 1 / 3, 0.0]]),
@@ -228,6 +229,7 @@ class RoleAwarePipelineTests(unittest.TestCase):
         policy.agent_hash_list = [f"agent-{index}" for index in range(4)]
         policy.agent_graph = SimpleNamespace(availability_mask=[True] * 4)
         policy.max_width = 3
+        policy.threshold_multiplier = 1.0
         policy.device = torch.device("cpu")
         selected, _ = policy._choose(
             torch.tensor([[0.25, 0.25, 0.25, 0.25, 0.0]]),

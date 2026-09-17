@@ -253,52 +253,12 @@ class BenchmarkEvaluator:
     
     @staticmethod
     def check_mmlu(final_ans, true_ans):
-        if final_ans is None or true_ans is None:
+        if not final_ans or true_ans is None:
             return False
-        if len(final_ans) == 0:
-            return False
-        pattern = r'answer is\s+([A-Z])'
-        match = re.search(pattern, final_ans)
-        if match:
-            final = match.group(1).strip()
-            if final==true_ans:
-                return True
-        
-        pattern = r'is\s+([A-Z])'
-        match = re.search(pattern, final_ans)
-        if match:
-            final = match.group(1).strip()
-            if final==true_ans:
-                return True
+        prediction = BenchmarkEvaluator.extract_choice_answer(final_ans)
+        gold = BenchmarkEvaluator.extract_letter(true_ans.strip()).upper()
+        return prediction.upper() == gold
 
-        final_ans = final_ans.strip().lower()
-        true_ans = true_ans.strip().lower()
-        if final_ans == true_ans:
-            return True
-        
-        final_ans_lines = final_ans.split('\n')
-        ans = []
-        residual = []
-        for li, al in enumerate(final_ans_lines):
-            ans.append(al)
-            if 'answer is' in al:
-                break
-        residual = list(final_ans_lines[li + 1:])
-        ans = '\n'.join(ans)
-        residual = '\n'.join(residual)
-        
-        pattern = 'the answer is ('
-        pred = ans.split(pattern)
-        
-        if len(pred) > 1:
-            pred = BenchmarkEvaluator.extract_letter(pred[1])
-            gold = BenchmarkEvaluator.extract_letter(true_ans)
-            return pred[0] == gold
-        else:
-            pred = BenchmarkEvaluator.extract_letter(ans)
-            gold = BenchmarkEvaluator.extract_letter(true_ans)
-            return pred == gold
-    
     @staticmethod
     def check_gsm8k(final_ans, true_ans):
         if final_ans is None or true_ans is None:   
@@ -338,33 +298,16 @@ class BenchmarkEvaluator:
     def extract_choice_answer(text):
         if text is None:
             return text
-        # First pattern: 'answer is X' 
-        pattern = r'answer is\s+([A-Z])'
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip()
-        
-        # Second pattern: 'is X'
-        pattern = r'is\s+([A-Z])'
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip()
-        
-        # Third pattern: '(X)' or 'The answer is (X)'
-        pattern = r'\(([A-Z])\)'
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip()
-        
-        # Fourth pattern: 'X'
-        if len(text) == 1:
-            pattern = r'[A-Z]'
-            match = re.search(pattern, text)
-            if match:
-                return match.group(0).strip()
-
+        # Compare positions across supported formats, rather than returning
+        # the first match from the first matching pattern.
+        matches = list(re.finditer(
+            r"(?i:\bis)\s+([A-Z])\b|\(([A-Za-z])\)", text
+        ))
+        if matches:
+            match = matches[-1]
+            return (match.group(1) or match.group(2)).upper()
         return text.strip()
-    
+
     @staticmethod
     def normalize_string(s):
         return ''.join(s.split()).lower()

@@ -1,3 +1,4 @@
+run_id: mmlu_train_diag_entropy_001_s42
 mode: train
 seed: 42
 personas_path: personas/role_aware/s0_pool.jsonl
@@ -6,7 +7,7 @@ output_dir: runs
 dataset:
   name: MMLU-Pro
   mode: train
-  data_limit: null
+  data_limit: 20
   data_start: 0
   split_seed: 42
   reference_items_per_teammate: 50
@@ -30,10 +31,9 @@ profiles:
     required_for_train: true
 
 checkpoint:
-  interval_items: 20
-  snapshot_interval_items: 20
-  keep_snapshots: 3
-
+  interval_items: 5
+  snapshot_interval_items: 5
+  keep_snapshots: 5
 
 policy:
   type: role_aware_reinforce
@@ -55,8 +55,18 @@ policy:
     growth_rate: 1.0
     inverse: false
   policy_mode: train
+  routing:
+    mode: legacy_threshold
+    selection_count: 1
+    threshold_multiplier: 1.5
+    allow_policy_transfer: true
 
 global_config:
   graph:
     max_width: 3
     max_depth: 3
+  audit:
+    enabled: true
+  aggregation:
+    mode: legacy
+    seed: 42

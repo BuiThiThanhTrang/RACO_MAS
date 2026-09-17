@@ -1,5 +1,6 @@
 import json
 import os
+from role_aware.audit_trace import AuditTrace, digest, write_manifest
 from pathlib import Path
 
 from agent.register.register import AgentRegister
@@ -65,6 +66,7 @@ class BenchmarkRunner:
         self.dataset_name = str(dataset_name or policy_config.get("dataset_name"))
         self.dataset_mode = str(dataset_mode or policy_config.get("dataset_mode"))
         self.seed = int(seed)
+        self.split_seed = int(policy_config.get("split_seed", self.seed))
         self.run_dir = Path(run_dir or "runs")
         self.profile_build_mode = bool(profile_build_mode)
         self.probe_items_per_teammate = int(probe_items_per_teammate)
@@ -83,6 +85,8 @@ class BenchmarkRunner:
         self.max_parallel_paths = int(
             graph_config.get("max_width", graph_config.get("max_parallel_paths", 4))
         )
+        if self.max_step_num < 1 or self.max_parallel_paths < 1:
+            raise ValueError("Graph depth and width must be positive")
         self.save_state = False
 
         self.registry = AgentRegister()
@@ -96,7 +100,7 @@ class BenchmarkRunner:
         self.profile_store = ProfileStore(alpha=profile_alpha)
         self.profile_store.initialize(self.registry.agent_config)
         self.pool_fingerprint = pool_fingerprint(self.registry.agent_config)
-        manifest_path = split_manifest_path(self.dataset_name, self.seed)
+        manifest_path = split_manifest_path(self.dataset_name, self.split_seed)
         self.split_manifest_hash = file_hash(manifest_path)
         policy_for_hash = json.loads(json.dumps(policy_config, default=str))
         policy_for_hash.pop("dataset_mode", None)
@@ -142,7 +146,9 @@ class BenchmarkRunner:
             )
         )
         checkpoint_validation_scope = (
-            "exact" if self.checkpoint_profile_restore else "policy_transfer"
+            "weights_only" if (policy_config.get("routing", {}).get("allow_policy_transfer", False)
+                               and self.policy_mode == "evolved")
+            else "exact" if self.checkpoint_profile_restore else "policy_transfer"
         )
         self._resume_payload = (
             self.checkpoint_manager.load(
@@ -222,6 +228,22 @@ class BenchmarkRunner:
                 "result_file": None,
             }
 
+        audit_config = self.global_config.get("audit", {})
+        self.audit_enabled = bool(audit_config.get("enabled", True))
+        self.last_result_metadata = {}
+        if self.audit_enabled:
+            self.audit_manifest = write_manifest(self.run_dir, {"runtime": self.global_config, "policy": policy_config},
+                run_id=self.run_dir.name, split=self.dataset_mode, router_seed=self.seed,
+                personas_path=str(Path(self.personas_path).resolve()),
+                allowed_tools=list(self.allowed_tools),
+                split_seed=int(policy_config.get("split_seed", self.seed)),
+                checkpoint_hash=file_hash(checkpoint_path) if checkpoint_path else None,
+                pool_hash=self.pool_fingerprint, split_hash=self.split_manifest_hash,
+                profile_hash=digest(self.profile_store.state_dict()),
+                routing_mode=getattr(self.policy, "routing_mode", "legacy_threshold"),
+                estimator=getattr(self.policy, "estimator_version", "legacy_surrogate_v1"))
+        self._attempt_counts = {}
+
     def _load_initial_profiles(self, profile_path, source):
         profile_path = Path(profile_path)
         manifest_path = profile_path.with_suffix(".manifest.json")
@@ -237,7 +259,7 @@ class BenchmarkRunner:
         )
         checks = {
             "task": self.dataset_name,
-            "seed": self.seed,
+            "seed": getattr(self, "split_seed", self.seed),
             "items_per_teammate": expected_count,
             "pool_fingerprint": self.pool_fingerprint,
             "split_manifest_hash": self.split_manifest_hash,
@@ -347,6 +369,17 @@ class BenchmarkRunner:
             self.profile_store.reset()
         if self.registry.agent_num != self.initial_agent_count:
             raise RuntimeError("Agent registry size changed during the run")
+        task_id = str(data_item.get("id", "unknown"))
+        directory = self.run_dir / "audit" / ("task-" + digest(task_id)[:16])
+        attempt = self._attempt_counts.get(task_id, 0) + 1
+        while (directory / f"attempt-{attempt:04d}").exists():
+            attempt += 1
+        self._attempt_counts[task_id] = attempt
+        trace = AuditTrace(directory / f"attempt-{attempt:04d}", self.run_dir.name,
+                           task_id, f"attempt-{attempt:04d}", enabled=self.audit_enabled)
+        if self.audit_enabled:
+            trace.context["manifest_hash"] = self.audit_manifest["manifest_hash"]
+        runtime = dict(self.global_config, audit_split=self.dataset_mode)
         reasoning = GraphReasoning(
             data_item,
             self.graph,
@@ -354,8 +387,9 @@ class BenchmarkRunner:
             action_graph=self.action_graph,
             max_parallel_paths=self.max_parallel_paths,
             max_step_num=self.max_step_num,
-            runtime_config=self.global_config,
+            runtime_config=runtime,
             registry=self.registry,
+            audit=trace,
             profile_evidence=(
                 self.profile_evidence
                 if self.profile_updates_enabled
@@ -363,6 +397,9 @@ class BenchmarkRunner:
             ),
             external_tools_enabled=bool(self.allowed_tools),
         )
+        self.last_result_metadata = dict(run_id=self.run_dir.name, task_id=task_id,
+            attempt_id=trace.context["attempt_id"], trace_path=str(trace.directory.resolve()),
+            split=self.dataset_mode)
         return reasoning, self.graph
 
     def run_reference_item(self, data_item, teammate_id):
@@ -380,7 +417,12 @@ class BenchmarkRunner:
         reasoning.start(self.save_state if self.save_state else None)
         self.save_state = False
 
+        frozen = (digest(self.profile_store.state_dict()),
+                  digest(self.policy.policy_network.state_dict())) if self.dataset_mode != "train" else None
         final_ans, _ = reasoning.n_step(self.max_step_num)
+        if frozen is not None and frozen != (digest(self.profile_store.state_dict()),
+                                            digest(self.policy.policy_network.state_dict())):
+            raise RuntimeError("Policy/profile changed during evaluation")
 
         reasoning.visualize_path()
         reasoning.visualize_graph()

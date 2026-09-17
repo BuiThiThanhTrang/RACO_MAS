@@ -28,6 +28,7 @@ def format_question(task):
         "type": "MMLU-Pro",
         "Question": f"Answer this multiple-choice question about {task['category']}.\n{task['question']}\n" + " ".join(options),
         "Answer": task["answer"],
+        "choices": string.ascii_uppercase[:len(task["options"])],
         "id": task["question_id"],
     }
 
@@ -46,7 +47,8 @@ def run(runner, evaluator, results_dir, mode, data_limit=None, data_start=0, see
             task = format_question(row)
             prediction = runner.run_reasoning(task)
             success = evaluator.check_mmlu(prediction, task["Answer"])
-            fd.write(json.dumps({"id": task["id"], "pred": prediction, "answer": task["Answer"], "correct": success}, ensure_ascii=False) + "\n")
+            fd.write(json.dumps({"id": task["id"], "pred": prediction, "answer": task["Answer"], "correct": success,
+                                 "offset": absolute_offset, **getattr(runner, "last_result_metadata", {})}, ensure_ascii=False) + "\n")
             fd.flush()
             os.fsync(fd.fileno())
             complete_item(runner, task["id"], absolute_offset + 1, result_path)

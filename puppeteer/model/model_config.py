@@ -11,7 +11,7 @@ class ModelConfig:
     model_size: int   # for open-source models, this is the number of parameters in millions; but for API models, this is just an estimate
     url: Optional[str] = None      
     api_profile: Optional[str] = None
-    temperature: float = 0.1       
+    temperature: float = 0.0       
     description: str = ""          
 
 

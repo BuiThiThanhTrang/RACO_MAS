@@ -18,6 +18,7 @@ from role_aware.reward_scorer import AuxiliaryRewardScorer
 from role_aware.schemas import CAPABILITY_DIMENSIONS
 from role_aware.task_analyzer import TaskAnalyzerRepresentation
 from role_aware.trajectory_reward import build_trajectory_reward_input
+from role_aware.multiselect import sample_ordered
 
 logger = logging.getLogger("train")
 ORCHESTRATOR_STOP = "__orchestrator_stop__"
@@ -124,6 +125,20 @@ class RoleAwareREINFORCE(LearningPolicy):
         )
         if self.cost_normalization <= 0:
             raise ValueError("cost_reward.normalization must be positive")
+        routing = self.config.get("routing", {})
+        self.routing_mode = routing.get("mode", "legacy_threshold")
+        if self.routing_mode not in {"legacy_threshold", "categorical_set_v2"}:
+            raise ValueError("Unknown routing.mode")
+        self.threshold_multiplier = float(routing.get("threshold_multiplier", 1.5))
+        self.selection_count = int(routing.get("selection_count", 1))
+        if self.selection_count < 1 or self.threshold_multiplier < 0:
+            raise ValueError("Invalid routing count/threshold")
+        self.objective_version = "sum_discounted_leaf_v1"
+        self.estimator_version = ("joint_episode_v2" if self.routing_mode == "categorical_set_v2"
+                                  else "legacy_surrogate_v1")
+        self.decisions = []
+        self._path_lookup = {}
+        self.audit = None
         self.cost_scale = self.step_penalty
         self.seed = int(self.config.get("seed", 42))
         random.seed(self.seed)
@@ -259,6 +274,8 @@ class RoleAwareREINFORCE(LearningPolicy):
             device=self.device,
             dtype=torch.bool,
         )
+        self._raw_probs = probs.detach().cpu().tolist()[0]
+        self._action_mask = mask.detach().cpu().tolist()
         probs = probs.masked_fill(~mask.unsqueeze(0), 0.0)
         denominator = probs.sum(dim=-1, keepdim=True)
         if torch.any(denominator <= 0):
@@ -268,72 +285,112 @@ class RoleAwareREINFORCE(LearningPolicy):
 
     def _choose(self, probs, allow_stop):
         distribution = torch.distributions.Categorical(probs)
-        if self.training:
-            first = distribution.sample()
-        else:
-            first = distribution.sample()
-        first_index = int(first.item())
+        first_index = int(distribution.sample().item())
+        self._sampled_first = first_index
         stop_index = len(self.agent_hash_list)
         if allow_stop and first_index == stop_index:
+            self._threshold_candidates = []
             return [first_index], distribution
-
-        available_count = max(
-            1,
-            sum(bool(available) for available in self.agent_graph.availability_mask),
-        )
-        threshold = 1.0 / available_count
-        candidates = torch.nonzero(probs[0, :-1] >= threshold).flatten()
-        if first_index < stop_index and first_index not in candidates.tolist():
-            candidates = torch.cat((torch.tensor([first_index], device=self.device), candidates))
+        available_count = max(1, sum(bool(v) for v in self.agent_graph.availability_mask))
+        threshold = getattr(self, "threshold_multiplier", 1.5) / available_count
+        candidates = torch.nonzero(probs[0, :-1] >= threshold).flatten().tolist()
+        self._threshold_candidates = list(candidates)
+        if first_index < stop_index and first_index not in candidates:
+            candidates.append(first_index)
         ordered = sorted(
-            set(int(index) for index in candidates.tolist()),
-            key=lambda index: float(probs[0, index]),
+            set(candidates),
+            key=lambda i: probs[0, i].detach().item(),
             reverse=True,
         )
-        return ordered[: self.max_width] or [first_index], distribution
+        return ordered[:self.max_width] or [first_index], distribution
+
+    def begin_task(self, audit=None):
+        self.trajectories = []
+        self.entropies = []
+        self.decisions = []
+        self._path_lookup = {}
+        self.audit = audit
+
+    def abort_task(self):
+        self.begin_task(getattr(self, "audit", None))
+
+    def propose(self, global_info, capacity):
+        if capacity < 1:
+            raise ValueError("Routing requires reserved capacity")
+        allow_stop = global_info.path_id != -1
+        from contextlib import nullcontext
+        scope = (self.audit.call_scope(path_uid=getattr(global_info, "path_uid", "root"),
+                                      purpose="task_encoder") if self.audit else nullcontext())
+        with scope:
+            probs = self._distribution(global_info, allow_stop)
+        stop_index = len(self.agent_hash_list)
+        if self.routing_mode == "categorical_set_v2":
+            selection = sample_ordered(probs, min(capacity, self.selection_count), stop_index)
+            indices = selection.indices
+            joint = selection.log_prob
+            entropy = selection.entropy
+            conditional = selection.conditional_probs
+        else:
+            indices, distribution = self._choose(probs, allow_stop)
+            joint = None
+            entropy = distribution.entropy().mean()
+            conditional = None
+        decision_id = self.audit.new_id("decision") if self.audit else f"decision-{len(self.decisions)}"
+        actions = [ORCHESTRATOR_STOP if i == stop_index else self.agent_hash_list[i] for i in indices]
+        proposal = dict(decision_id=decision_id, actions=actions, indices=indices, probs=probs,
+                        joint_log_prob=joint, entropy=entropy, capacity=capacity)
+        if self.audit:
+            count = max(1, sum(bool(v) for v in self.agent_graph.availability_mask))
+            self.audit.emit("routing_decision", decision_id=decision_id,
+                path_uid=getattr(global_info, "path_uid", "root"), allow_stop=allow_stop,
+                p_stop=float(probs[0, stop_index].detach()), probabilities=probs[0],
+                raw_probabilities=self._raw_probs, mask=self._action_mask,
+                capacity=capacity, steps_completed=len(global_info.workflow.workflow),
+                remaining_depth=getattr(global_info, "remaining_depth", None),
+                mode=self.routing_mode, entropy=entropy, selected=actions,
+                threshold=self.threshold_multiplier/count if joint is None else None,
+                sampled_first=getattr(self, "_sampled_first", None) if joint is None else indices[0],
+                threshold_candidates=getattr(self, "_threshold_candidates", []) if joint is None else [],
+                conditional_probs=conditional, joint_log_prob=joint,
+                estimator=self.estimator_version)
+        return proposal
+
+    def accept(self, proposal, parent_uid, allocations):
+        accepted = [item["action"] for item in allocations]
+        if self.routing_mode == "categorical_set_v2" and accepted != proposal["actions"]:
+            raise RuntimeError("Sampling/execution mismatch: capacity must be reserved before sampling")
+        if not allocations:
+            return
+        parent_index = self._path_lookup.get(parent_uid)
+        prefix = ([dict(step) for step in self.trajectories[parent_index]]
+                  if parent_index is not None else [])
+        for item in allocations:
+            uid, action = item["path_uid"], item["action"]
+            if uid not in self._path_lookup:
+                self._path_lookup[uid] = len(self.trajectories)
+                self.trajectories.append([dict(step) for step in prefix])
+        for item in allocations:
+            action = item["action"]
+            index = len(self.agent_hash_list) if action == ORCHESTRATOR_STOP else self.agent_hash_list.index(action)
+            log_prob = torch.log(proposal["probs"][0, index]).reshape(1)
+            self.trajectories[self._path_lookup[item["path_uid"]]].append(dict(
+                log_prob=log_prob, action=action, action_id=item["action_id"],
+                decision_id=proposal["decision_id"], reward=0.0 if action == ORCHESTRATOR_STOP else -self.step_penalty,
+                finalized=False))
+        self.entropies.append(proposal["entropy"])
+        self.decisions.append(dict(decision_id=proposal["decision_id"],
+            log_prob=proposal["joint_log_prob"], actions=[dict(item) for item in allocations]))
 
     def forward(self, global_info):
-        allow_stop = global_info.path_id != -1
-        probs = self._distribution(global_info, allow_stop)
-        selected, distribution = self._choose(probs, allow_stop)
-        entropy = distribution.entropy().mean()
-        self.entropies.append(entropy)
-        stop_index = len(self.agent_hash_list)
-
-        if global_info.path_id == -1:
-            while len(self.trajectories) < len(selected):
-                self.trajectories.append([])
-            path_indices = list(range(len(selected)))
-        else:
-            while len(self.trajectories) <= global_info.path_id:
-                self.trajectories.append([])
-            path_indices = [global_info.path_id]
-            for _ in selected[1:]:
-                self.trajectories.append(list(self.trajectories[global_info.path_id]))
-                path_indices.append(len(self.trajectories) - 1)
-
-        outputs = []
-        for path_index, action_index in zip(path_indices, selected):
-            action_tensor = torch.tensor(action_index, device=self.device)
-            action_name = (
-                ORCHESTRATOR_STOP
-                if action_index == stop_index
-                else self.agent_hash_list[action_index]
-            )
-            self.trajectories[path_index].append(
-                {
-                    "log_prob": distribution.log_prob(action_tensor).reshape(1),
-                    "action": action_name,
-                    "reward": (
-                        0.0
-                        if action_name == ORCHESTRATOR_STOP
-                        else -self.step_penalty
-                    ),
-                    "finalized": False,
-                }
-            )
-            outputs.append(action_name)
-        return outputs
+        # Compatibility API; the runtime uses propose/accept with stable path IDs.
+        proposal = self.propose(global_info, self.max_width)
+        parent = getattr(global_info, "path_uid", str(global_info.path_id))
+        allocations = [dict(path_uid=(str(i) if global_info.path_id == -1 else
+                        parent if i == 0 else f"{parent}/{len(self.trajectories)+i}"),
+                        action=a, action_id=f"{proposal['decision_id']}/{i}")
+                       for i, a in enumerate(proposal["actions"])]
+        self.accept(proposal, parent, allocations)
+        return proposal["actions"]
 
     @staticmethod
     def _json_safe(value):
@@ -419,7 +476,8 @@ class RoleAwareREINFORCE(LearningPolicy):
             logger.warning("Could not write trajectory reward trace: %s", error)
 
     def finalize_task(self, transition, global_info):
-        path_id = int(transition.get("path_id", 0))
+        path_id = getattr(self, "_path_lookup", {}).get(
+            transition.get("path_uid"), int(transition.get("path_id", 0)))
         if path_id >= len(self.trajectories) or not self.trajectories[path_id]:
             return
         trajectory = self.trajectories[path_id]
@@ -427,7 +485,11 @@ class RoleAwareREINFORCE(LearningPolicy):
         normalized_cost = float(global_info.total_cost) / self.cost_normalization
         token_cost_penalty = self.token_cost_weight * normalized_cost
         step_penalty_total = -sum(float(step["reward"]) for step in trajectory)
-        quality = self._trajectory_quality(transition, global_info)
+        from contextlib import nullcontext
+        scope = (self.audit.call_scope(path_uid=transition.get("path_uid"), purpose="reward_scorer")
+                 if getattr(self, "audit", None) else nullcontext())
+        with scope:
+            quality = self._trajectory_quality(transition, global_info)
         terminal_reward = (
             task_reward
             + float(quality["skywork_weighted"])
@@ -463,6 +525,10 @@ class RoleAwareREINFORCE(LearningPolicy):
         self.rewards_history.append(path_reward)
         self.reward_breakdowns.append(breakdown)
         self._write_reward_trace(global_info, breakdown)
+        if getattr(self, "audit", None):
+            self.audit.emit("reward_assigned", path_uid=transition.get("path_uid"),
+                            decision_ids=[step.get("decision_id") for step in trajectory],
+                            action_ids=[step.get("action_id") for step in trajectory], **breakdown)
 
     def _returns(self, trajectory):
         result = []
@@ -486,13 +552,23 @@ class RoleAwareREINFORCE(LearningPolicy):
             returns_all.extend(returns.detach().cpu().tolist())
             for step, value in zip(trajectory, returns):
                 losses.append(-step["log_prob"] * value)
-        loss = torch.stack(losses).sum()
+        if getattr(self, "routing_mode", "legacy_threshold") == "categorical_set_v2":
+            if len(completed) != len(self.trajectories):
+                raise RuntimeError("Cannot update an incomplete episode")
+            task_return = sum(self._returns(t)[0] for t in completed).detach()
+            loss = -torch.stack([d["log_prob"] for d in self.decisions]).sum() * task_return
+        else:
+            task_return = sum(self._returns(t)[0] for t in completed).detach()
+            loss = torch.stack(losses).sum()
         if self.entropies:
             loss -= self.entropy_coef * torch.stack(self.entropies).sum()
         optimizer_stepped = False
+        gradient_norm = None
         if self.optimizer_updates_enabled:
             self.optimizer.zero_grad()
             loss.backward()
+            gradient_norm = float(torch.sqrt(sum(
+                (p.grad.detach() ** 2).sum() for p in self.policy_network.parameters() if p.grad is not None)))
             self.optimizer.step()
             self.global_step += 1
             optimizer_stepped = True
@@ -500,13 +576,25 @@ class RoleAwareREINFORCE(LearningPolicy):
             "policy_loss": float(loss.detach().cpu().item()),
             "mean_reward": float(np.mean(returns_all)),
             "optimizer_stepped": optimizer_stepped,
+            "task_return": float(task_return), "return_variance": float(np.var(returns_all)),
+            "gradient_norm": gradient_norm,
+            "estimator": getattr(self, "estimator_version", "legacy_surrogate_v1"),
         }
+        if getattr(self, "audit", None):
+            self.audit.emit("policy_update", decision_ids=[d["decision_id"] for d in self.decisions], **metrics)
         self.trajectories = []
         self.entropies = []
+        self.decisions = []
+        self._path_lookup = {}
         return metrics
 
     def training_state_dict(self):
         return {
+            "runtime_version": "path_sessions_v1",
+            "routing_mode": self.routing_mode,
+            "routing_version": "2",
+            "objective_version": self.objective_version,
+            "estimator_version": self.estimator_version,
             "model_state_dict": self.policy_network.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "state_dim": self.policy_network.state_dim,
@@ -526,6 +614,19 @@ class RoleAwareREINFORCE(LearningPolicy):
             ROLE_NAMES
         ):
             raise ValueError("Checkpoint role schema mismatch")
+        if load_optimizer and checkpoint.get("runtime_version") != "path_sessions_v1":
+            raise ValueError("Runtime version mismatch; use explicit weights-only evaluation")
+        source_mode = checkpoint.get("routing_mode", "legacy_threshold")
+        target_mode = getattr(self, "routing_mode", "legacy_threshold")
+        transfer = getattr(self, "config", {}).get("routing", {}).get("allow_policy_transfer", False)
+        if source_mode != target_mode and (load_optimizer or not transfer):
+            raise ValueError("Routing version mismatch; weights-only transfer requires explicit allow_policy_transfer")
+        if load_optimizer and checkpoint.get("estimator_version", "legacy_surrogate_v1") != getattr(self, "estimator_version", "legacy_surrogate_v1"):
+            raise ValueError("Estimator version mismatch")
+        if load_optimizer and checkpoint.get("objective_version") != self.objective_version:
+            raise ValueError("Objective version mismatch")
+        if load_optimizer and checkpoint.get("routing_version") != "2":
+            raise ValueError("Routing version mismatch")
         self.policy_network.load_state_dict(checkpoint["model_state_dict"], strict=True)
         if load_optimizer:
             optimizer_state = checkpoint.get("optimizer_state_dict")

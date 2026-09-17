@@ -1,12 +1,15 @@
 import copy
 import inspect
+import json
 import tempfile
 import unittest
+from json import JSONDecodeError
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 import torch
 
 from agent.register.persona_loader import load_teammate_specs
@@ -195,6 +198,76 @@ class RoleAwareFoundationTests(unittest.TestCase):
         self.assertLessEqual(request_sizes[2], 300)
         self.assertGreater(request_sizes[0], request_sizes[1])
         self.assertGreater(request_sizes[1], request_sizes[2])
+
+    def test_chat_recovers_valid_completion_with_trailing_json(self):
+        payload = {
+            "id": "chatcmpl-fixture",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "fixture",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "OK"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 2,
+                "completion_tokens": 1,
+                "total_tokens": 3,
+            },
+        }
+        valid_json = json.dumps(payload)
+        body = valid_json + json.dumps({"provider_debug": True})
+
+        class RawResponse:
+            http_response = httpx.Response(200, text=body)
+
+            @staticmethod
+            def parse():
+                raise JSONDecodeError("Extra data", body, len(valid_json))
+
+        raw_api = SimpleNamespace(create=lambda **kwargs: RawResponse())
+        client = SimpleNamespace(
+            base_url="https://router.huggingface.co/v1",
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(with_raw_response=raw_api)
+            ),
+        )
+
+        response, tokens = chat_completion_request(
+            [{"role": "user", "content": "Question"}], "fixture", client
+        )
+
+        self.assertEqual(response.choices[0].message.content, "OK")
+        self.assertEqual(tokens, 3)
+
+    def test_chat_does_not_recover_truncated_json(self):
+        body = '{"id":"chatcmpl-fixture","choices":['
+
+        class RawResponse:
+            http_response = httpx.Response(200, text=body)
+
+            @staticmethod
+            def parse():
+                raise JSONDecodeError("Expecting value", body, len(body))
+
+        raw_api = SimpleNamespace(create=lambda **kwargs: RawResponse())
+        client = SimpleNamespace(
+            base_url="https://router.huggingface.co/v1",
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(with_raw_response=raw_api)
+            ),
+        )
+
+        with (
+            patch("model.model_utils.CHAT_MAX_RETRY_TIMES", 1),
+            self.assertRaises(JSONDecodeError),
+        ):
+            chat_completion_request(
+                [{"role": "user", "content": "Question"}], "fixture", client
+            )
 
     def test_entrypoint_does_not_write_shared_policy_config(self):
         source = (PROJECT_DIR / "main.py").read_text(encoding="utf-8")

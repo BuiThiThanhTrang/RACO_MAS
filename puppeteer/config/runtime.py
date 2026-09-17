@@ -136,6 +136,18 @@ def load_experiment_config(
     if reset_scope not in {"episode", "teammate_sequence", "run"}:
         raise ValueError("profiles.reset_scope must be episode, teammate_sequence, or run")
 
+    routing = (raw.get("policy") or {}).get("routing", {})
+    if routing.get("mode", "legacy_threshold") not in {"legacy_threshold", "categorical_set_v2"}:
+        raise ValueError("Unknown policy.routing.mode")
+    if int(routing.get("selection_count", 1)) < 1:
+        raise ValueError("routing.selection_count must be positive")
+    if float(routing.get("threshold_multiplier", 1.5)) < 0:
+        raise ValueError("routing.threshold_multiplier must be nonnegative")
+    aggregation = (raw.get("global_config") or {}).get("aggregation", {})
+    if aggregation.get("mode", "legacy") not in {"legacy", "majority", "majority_verifier"}:
+        raise ValueError("Unknown aggregation.mode")
+    if aggregation.get("mode") == "majority_verifier" and not aggregation.get("verifier_model"):
+        raise ValueError("aggregation.verifier_model is required")
     return ExperimentConfig(
         run_id=run_id,
         seed=seed,

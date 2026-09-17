@@ -17,7 +17,7 @@ class ModelQueryManager:
         from openai import OpenAI
         for key, config in self.registry.get_all_models().items():
             if config.url:
-                self.clients[config.name] = OpenAI(api_key="none", base_url=config.url)
+                self.clients[config.name] = OpenAI(api_key="none", base_url=config.url, max_retries=0)
                 continue
 
             if config.provider in {"openai", "openai_compatible"}:
@@ -44,6 +44,7 @@ class ModelQueryManager:
                     continue
 
                 client_kwargs = {
+                    "max_retries": 0,
                     "api_key": provider_config.get("api_key"),
                     "base_url": provider_config.get("base_url"),
                 }
@@ -93,7 +94,7 @@ class ModelQueryManager:
         )
         
         if isinstance(response, str):
-            return response, 1
+            return response, total_tokens
         
         response_message = response.choices[0].message.content or ""
         return response_message, total_tokens

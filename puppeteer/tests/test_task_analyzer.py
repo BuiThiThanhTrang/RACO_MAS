@@ -38,7 +38,7 @@ class TaskAnalyzerRemoteTests(unittest.TestCase):
             state, reward = analyzer("solve the task")
 
         client_class.assert_called_once_with(
-            base_url="http://embedding.local/v1", api_key="test-key"
+            base_url="http://embedding.local/v1", api_key="test-key", max_retries=0
         )
         client.embeddings.create.assert_called_once_with(
             model="BAAI/bge-large-en-v1.5",

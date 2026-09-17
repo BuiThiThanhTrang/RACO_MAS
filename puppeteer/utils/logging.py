@@ -6,18 +6,19 @@ import datetime
 class LogManager:
     _instance = None
 
-    def __new__(cls, config_path=None, task_name=None):
+    def __new__(cls, config_path=None, task_name=None, folder_path=None):
         if cls._instance is not None:
             cls._instance._cleanup()
         cls._instance = super(LogManager, cls).__new__(cls)
-        cls._instance._initialize(config_path, task_name)
+        cls._instance._initialize(config_path, task_name, folder_path)
         return cls._instance
 
-    def _initialize(self, config_path, task_name):
+    def _initialize(self, config_path, task_name, folder_path=None):
         self.loggers = {}
         self.global_config = yaml.safe_load(open(config_path, "r"))
         self.task_name = task_name
-        self.folder_path = self._create_log_folder()
+        self.folder_path = str(folder_path) if folder_path else self._create_log_folder()
+        os.makedirs(self.folder_path, exist_ok=True)
         self._setup_main_logger()
         self._setup_model_logger()
         self._setup_training_logger()

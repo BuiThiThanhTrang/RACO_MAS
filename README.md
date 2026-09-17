@@ -83,10 +83,32 @@ Instead of static structures, our framework uses a centralized orchestrator (“
     ```
     Example:
     ```bash
-    # Run MMLU-Pro validation set with a data limit of 10
-    python main.py MMLU-Pro validation --data_limit 10
+    # Smoke-test the MMLU-Pro research dev split
+    python main.py MMLU-Pro dev --config config/experiments/role_aware_mmlu_pro.yaml --policy_mode initialized --profile_source priors --data_limit 2
     ```
 If the run is successful, you will see output similar to [EXAMPLE](puppeteer/logs/example).
+## MMLU-Pro and CW experiments
+
+Run from `puppeteer/`. CW is the task name for CommonGen-Hard.
+
+```bash
+# Smoke-test CW
+python main.py CW dev --config config/experiments/role_aware_cw.yaml --policy_mode initialized --profile_source priors --data_limit 2
+# Build separate probe profiles for the configured pool before fresh training
+python main.py MMLU-Pro probe --config config/experiments/role_aware_mmlu_pro.yaml --build_probe_profiles
+python main.py CW probe --config config/experiments/role_aware_cw.yaml --build_probe_profiles
+# Train
+python main.py MMLU-Pro train --config config/experiments/role_aware_mmlu_pro.yaml
+python main.py CW train --config config/experiments/role_aware_cw.yaml
+# Evaluate a real checkpoint selected on dev; replace the checkpoint path
+python main.py MMLU-Pro dev --config config/experiments/role_aware_mmlu_pro.yaml --policy_mode evolved --checkpoint <checkpoint-path>
+python main.py CW dev --config config/experiments/role_aware_cw.yaml --policy_mode evolved --checkpoint <checkpoint-path>
+```
+
+For final evaluation, replace `dev` with `final` in the evaluation commands. Keep policy and profiles frozen during evaluation. Build profiles only from probe/reference, train on train, and select checkpoints/configurations on dev; do not use final for selection. Keep split/seed, evaluated items, reasoning budget, tool access, and CW judge/rubric fixed across comparisons. State explicitly when pool/model is the experimental variable.
+
+MMLU-Pro `validation` aliases the research dev subset (140 items from official test), not official validation (70 items). Research `final` contains 2,000 official-test items, not the full official test set. Report these subset names and sizes with results. CW uses its existing 200-item source and fixed research splits.
+
 # Customization 
 
 Puppeteer provides multiple ways to tailor the system to your needs

@@ -17,6 +17,8 @@ class Action:
     def to_dict(self):
         return {
             "agent": self.agent_role,
+            "action_id": getattr(self, "action_id", None),
+            "backbone": self.agent_model,
             "action": self.action,
             "cost": self.cost,
             "tokens": self.tokens,

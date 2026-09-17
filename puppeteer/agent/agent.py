@@ -6,8 +6,16 @@ from abc import ABC, abstractmethod
 from model.query_manager import query_manager
 from agent.agent_info.global_info import GlobalInfo
 from role_aware.schemas import TeammateSpec
+from agent.agent_session import session_field
 
 class Agent(ABC):
+    dialog_history = session_field("dialog_history")
+    initial_dialog_history = session_field("initial_dialog_history")
+    system_prompt = session_field("system_prompt")
+    last_prompt = session_field("last_prompt")
+    workspace_path = session_field("workspace_path")
+    _activated = session_field("_activated")
+
     def __init__(self, spec: TeammateSpec, index, runtime_config=None, policy=None, global_info:GlobalInfo =None, initial_dialog_history=None) -> None:
         """
         Initialize the Agent object.

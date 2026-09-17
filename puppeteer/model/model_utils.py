@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
 import math
 import time
 from typing import Any, Dict, Iterable, Mapping
 
 import yaml
+import httpx
+from openai.types.chat import ChatCompletion
 
 logger = logging.getLogger("model")
 
@@ -266,6 +269,58 @@ def _request_payload(
     }
 
 
+def _recover_chat_completion(raw_response, parse_error):
+    """Recover a complete ChatCompletion from a response with trailing JSON.
+
+    Some OpenAI-compatible providers occasionally concatenate a valid response
+    with another JSON value. We accept only a fully validated ChatCompletion;
+    truncated or otherwise invalid payloads still raise and enter normal retry.
+    """
+    text = raw_response.http_response.text
+    decoder = json.JSONDecoder()
+    offset = 0
+    decoded_values = 0
+    while offset < len(text):
+        while offset < len(text) and text[offset].isspace():
+            offset += 1
+        if offset >= len(text):
+            break
+        try:
+            value, end = decoder.raw_decode(text, offset)
+        except json.JSONDecodeError:
+            break
+        decoded_values += 1
+        try:
+            completion = ChatCompletion.model_validate(value)
+        except Exception:
+            offset = end
+            continue
+        if completion.choices:
+            return completion, {
+                "kind": "validated_chat_completion_from_malformed_json",
+                "decoded_values": decoded_values,
+                "trailing_chars": len(text[end:].strip()),
+            }
+        offset = end
+    raise parse_error
+
+
+def _create_chat_completion(completions, json_data):
+    raw_api = getattr(completions, "with_raw_response", None)
+    if raw_api is None:
+        return completions.create(**json_data), None
+    raw_response = raw_api.create(**json_data)
+    if not isinstance(getattr(raw_response, "http_response", None), httpx.Response):
+        return completions.create(**json_data), None
+    try:
+        return raw_response.parse(), None
+    except json.JSONDecodeError as error:
+        return _recover_chat_completion(raw_response, error)
+
+
+from role_aware.audit_trace import observe_provider_call, CALL_CONTEXT
+
+
 def chat_completion_request(messages, model, new_client, model_config_dict: Dict = None):
     if model_config_dict is None:
         model_config_dict = {
@@ -320,23 +375,40 @@ def chat_completion_request(messages, model, new_client, model_config_dict: Dict
             )
         )
         try:
-            response = new_client.chat.completions.create(**json_data)
-            completion_tokens = response.usage.completion_tokens if response.usage else 0
-            prompt_tokens = response.usage.prompt_tokens if response.usage else 0
-            total_tokens = response.usage.total_tokens if response.usage else 0
-            if total_tokens == 0:
-                total_tokens = prompt_tokens + completion_tokens
-            if total_tokens == 0:
-                total_tokens = estimate_text_tokens(
-                    response.choices[0].message.content
+            context = CALL_CONTEXT.get()
+            size = context[1].get("model_size", 0) if context else 0
+            with observe_provider_call(json_data["messages"], model, size) as receipt:
+                response, recovery = _create_chat_completion(
+                    new_client.chat.completions, json_data
                 )
-            model_log_and_print(
-                "[Model Query] Token Usage: \nCompletion Tokens: {} "
-                "\nPrompt Tokens: {} \nTotal Tokens: {}".format(
-                    completion_tokens, prompt_tokens, total_tokens
+                if recovery is not None:
+                    receipt["response_recovery"] = recovery
+                    logger.warning(
+                        "Recovered a validated ChatCompletion from malformed "
+                        "provider JSON: %s",
+                        recovery,
+                    )
+                completion_tokens = response.usage.completion_tokens if response.usage else 0
+                prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+                total_tokens = response.usage.total_tokens if response.usage else 0
+                if total_tokens == 0:
+                    total_tokens = prompt_tokens + completion_tokens
+                if total_tokens == 0:
+                    total_tokens = estimate_text_tokens(
+                        response.choices[0].message.content
+                    )
+                model_log_and_print(
+                    "[Model Query] Token Usage: \nCompletion Tokens: {} "
+                    "\nPrompt Tokens: {} \nTotal Tokens: {}".format(
+                        completion_tokens, prompt_tokens, total_tokens
+                    )
                 )
-            )
-            return response, total_tokens
+                provider_total = ((response.usage.total_tokens or 0) or
+                                  (response.usage.prompt_tokens or 0) + (response.usage.completion_tokens or 0)) if response.usage else 0
+                receipt["tokens"] = provider_total if provider_total else None
+                receipt["estimated_output_tokens"] = total_tokens if not provider_total else None
+                receipt["usage_source"] = "provider" if provider_total else "unavailable_estimated_output_only"
+                return response, total_tokens
         except Exception as error:
             last_error = error
             model_log_and_print(

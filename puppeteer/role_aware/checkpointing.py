@@ -172,7 +172,7 @@ class RunCheckpointManager:
     def load(
         self, path: str | Path, validation_scope: str = "exact"
     ) -> dict[str, Any]:
-        if validation_scope not in {"exact", "policy_transfer"}:
+        if validation_scope not in {"exact", "policy_transfer", "weights_only"}:
             raise ValueError(
                 "Checkpoint validation_scope must be exact or policy_transfer"
             )
@@ -192,13 +192,16 @@ class RunCheckpointManager:
             "split_manifest_hash",
             "config_hash",
         )
+        if validation_scope == "weights_only":
+            exact_keys = ("dataset_name", "split_manifest_hash")
         if validation_scope == "exact":
             exact_keys = (*exact_keys, "pool_fingerprint")
         for key in exact_keys:
             if actual.get(key) != self.metadata.get(key):
                 raise ValueError(f"Run checkpoint metadata mismatch for {key}")
         if (
-            "chat_context_hash" in actual
+            validation_scope != "weights_only"
+            and "chat_context_hash" in actual
             and actual.get("chat_context_hash")
             != self.metadata.get("chat_context_hash")
         ):

@@ -48,6 +48,7 @@ def _resolve_policy_config(experiment, task, dataset_mode, policy_mode, checkpoi
     config["dataset_mode"] = dataset_mode
     config["policy_mode"] = policy_mode
     config["seed"] = seed
+    config["split_seed"] = experiment.dataset.split_seed
 
     if policy_mode == "train" and dataset_mode != "train":
         raise ValueError(
@@ -139,6 +140,12 @@ def main():
     parser.add_argument("--data_limit", type=int, default=None)
     parser.add_argument("--data_start", type=int, default=None)
     parser.add_argument("--result_suffix", type=str, default=None)
+    parser.add_argument(
+        "--run_id",
+        type=str,
+        default=None,
+        help="Override the config run_id so diagnostic runs do not overwrite each other.",
+    )
     parser.add_argument("--personas", type=str, default=None)
     parser.add_argument(
         "--policy_mode",
@@ -175,6 +182,8 @@ def main():
         parser.error("Profile building cannot resume from a run checkpoint")
 
     experiment = load_experiment_config(args.config)
+    if args.run_id is not None:
+        experiment = replace(experiment, run_id=args.run_id)
     task = args.task or experiment.dataset.name
     dataset_mode = args.mode or experiment.dataset.mode
     data_limit = args.data_limit if args.data_limit is not None else experiment.dataset.data_limit
@@ -198,6 +207,8 @@ def main():
             "--profile_source or --profile_path"
         )
     if args.checkpoint is not None and policy_mode == "train":
+        if args.run_id is not None:
+            parser.error("--run_id cannot be used when resuming a training checkpoint")
         checkpoint_path = Path(args.checkpoint).resolve()
         checkpoint_run_dir = checkpoint_path.parent.parent
         experiment = replace(
@@ -322,14 +333,14 @@ def main():
             task_module=task_module,
             run_dir=run_dir,
             count=count,
-            seed=seed,
+            seed=experiment.dataset.split_seed,
             profile_path=profile_path,
         )
         return
 
     run_kwargs = {
         "data_start": data_start,
-        "seed": seed,
+        "seed": experiment.dataset.split_seed,
     }
     if task == "gsm-hard":
         run_kwargs["result_suffix"] = args.result_suffix
