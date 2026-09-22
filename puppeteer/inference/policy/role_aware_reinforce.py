@@ -106,6 +106,21 @@ class RoleAwareREINFORCE(LearningPolicy):
         self.learning_rate = float(training.get("learning_rate", 1e-4))
         self.gamma = float(training.get("gamma", 0.99))
         self.entropy_coef = float(training.get("entropy_coef", 0.01))
+        reward_mode_config = dict(self.config.get("reward", {}) or {})
+        self.reward_mode = str(reward_mode_config.get("mode", "role_aware_v1"))
+        if self.reward_mode not in {"role_aware_v1", "baseline_compatible_v1"}:
+            raise ValueError(
+                "policy.reward.mode must be role_aware_v1 or baseline_compatible_v1"
+            )
+        self.baseline_reward_config = dict(
+            reward_mode_config.get("baseline_compatible", {}) or {}
+        )
+        self.threshold_margin_coef = float(training.get("threshold_margin_coef", 0.0))
+        self.threshold_margin_cap = float(training.get("threshold_margin_cap", 0.25))
+        if self.threshold_margin_coef < 0:
+            raise ValueError("training.threshold_margin_coef must be nonnegative")
+        if self.threshold_margin_cap <= 0:
+            raise ValueError("training.threshold_margin_cap must be positive")
         policy_cost = self.config.get("cost", {})
         cost_config = self.runtime_config.get("cost_reward", {})
         self.step_penalty = float(
@@ -127,15 +142,57 @@ class RoleAwareREINFORCE(LearningPolicy):
             raise ValueError("cost_reward.normalization must be positive")
         routing = self.config.get("routing", {})
         self.routing_mode = routing.get("mode", "legacy_threshold")
-        if self.routing_mode not in {"legacy_threshold", "categorical_set_v2"}:
+        if self.routing_mode not in {
+            "legacy_threshold",
+            "categorical_set_v2",
+            "baseline_threshold_v1",
+        }:
             raise ValueError("Unknown routing.mode")
         self.threshold_multiplier = float(routing.get("threshold_multiplier", 1.5))
+        self.baseline_threshold_numerator = float(
+            routing.get("baseline_threshold_numerator", 2.0)
+        )
+        if self.baseline_threshold_numerator <= 0:
+            raise ValueError("routing.baseline_threshold_numerator must be positive")
         self.selection_count = int(routing.get("selection_count", 1))
         if self.selection_count < 1 or self.threshold_multiplier < 0:
             raise ValueError("Invalid routing count/threshold")
+        if self.threshold_margin_coef > 0 and self.routing_mode != "legacy_threshold":
+            raise ValueError(
+                "training.threshold_margin_coef requires routing.mode=legacy_threshold"
+            )
+        if self.threshold_margin_coef > 0 and self.threshold_multiplier <= 0:
+            raise ValueError(
+                "routing.threshold_multiplier must be positive when threshold-margin training is enabled"
+            )
+        if self.reward_mode == "baseline_compatible_v1" and self.threshold_margin_coef != 0:
+            raise ValueError(
+                "baseline_compatible_v1 requires training.threshold_margin_coef=0"
+            )
+        if (
+            self.reward_mode == "baseline_compatible_v1"
+            and self.routing_mode != "baseline_threshold_v1"
+        ):
+            raise ValueError(
+                "baseline_compatible_v1 requires routing.mode=baseline_threshold_v1"
+            )
+        if (
+            self.routing_mode == "baseline_threshold_v1"
+            and self.reward_mode != "baseline_compatible_v1"
+        ):
+            raise ValueError(
+                "baseline_threshold_v1 requires reward.mode=baseline_compatible_v1"
+            )
         self.objective_version = "sum_discounted_leaf_v1"
-        self.estimator_version = ("joint_episode_v2" if self.routing_mode == "categorical_set_v2"
-                                  else "legacy_surrogate_v1")
+        self.estimator_version = (
+            "joint_episode_v2"
+            if self.routing_mode == "categorical_set_v2"
+            else (
+                "baseline_threshold_surrogate_v1"
+                if self.routing_mode == "baseline_threshold_v1"
+                else "legacy_surrogate_v1"
+            )
+        )
         self.decisions = []
         self._path_lookup = {}
         self.audit = None
@@ -183,6 +240,10 @@ class RoleAwareREINFORCE(LearningPolicy):
             and self.policy_mode == "train"
             and self.dataset_mode in apply_modes
         )
+        if self.reward_mode == "baseline_compatible_v1" and reward_config.get("enabled", False):
+            raise ValueError(
+                "baseline_compatible_v1 requires trajectory_reward.enabled=false"
+            )
         self.reward_scorer = (
             AuxiliaryRewardScorer(reward_config)
             if self.trajectory_reward_active
@@ -215,8 +276,23 @@ class RoleAwareREINFORCE(LearningPolicy):
         self.max_width = int(
             graph_config.get("max_width", graph_config.get("max_parallel_paths", 4))
         )
+        self.max_depth = int(
+            graph_config.get("max_depth", graph_config.get("max_step_num", 2))
+        )
+        if self.max_depth < 1:
+            raise ValueError("graph.max_depth must be positive")
         self.agent_hash_list = agent_graph.hash_nodes
         self.agent_role_list = agent_graph.role_nodes
+        self.baseline_terminator_index = agent_graph.terminator_agent_index
+        if self.routing_mode == "baseline_threshold_v1":
+            if self.baseline_terminator_index is None:
+                raise ValueError(
+                    "baseline_threshold_v1 requires a persona with the terminate action"
+                )
+            if not self.agent_graph.availability_mask[self.baseline_terminator_index]:
+                raise ValueError(
+                    "baseline_threshold_v1 requires its terminate persona to be available"
+                )
         self.trajectories = []
         self.entropies = []
         self.rewards_history = []
@@ -250,30 +326,33 @@ class RoleAwareREINFORCE(LearningPolicy):
         return torch.tensor(rows, dtype=torch.float32, device=self.device)
 
     def get_state_representation(self, global_info):
-        context = [
-            {
-                "role": "user",
-                "content": str(global_info.task.get("Question", "")),
-            }
-        ]
-        if global_info.workflow.workflow:
-            context.append(
-                {
-                    "role": "assistant",
-                    "content": global_info.workflow.language_state,
-                }
+        path_context = getattr(global_info, "path_context", None)
+        if path_context is not None:
+            # Match the baseline orchestrator input, reconstructed from this
+            # path's sessions rather than shared teammate objects.
+            context = path_context.baseline_orchestrator_messages(
+                global_info.task.get("Question", "")
             )
+        else:
+            context = [{
+                "role": "system",
+                "content": "You are an assistant. Your task is to {}".format(
+                    global_info.task.get("Question", "")
+                ),
+            }]
         state, _ = self.state_representation(context)
         return state.to(self.device)
 
     def _distribution(self, global_info, allow_stop):
+        include_internal_stop = self.routing_mode != "baseline_threshold_v1"
         state = self.get_state_representation(global_info)
-        probs = self.policy_network(state, self._candidate_features(), include_stop=True)
-        mask = torch.tensor(
-            list(self.agent_graph.availability_mask) + [bool(allow_stop)],
-            device=self.device,
-            dtype=torch.bool,
+        probs = self.policy_network(
+            state, self._candidate_features(), include_stop=include_internal_stop
         )
+        mask_values = list(self.agent_graph.availability_mask)
+        if include_internal_stop:
+            mask_values.append(bool(allow_stop))
+        mask = torch.tensor(mask_values, device=self.device, dtype=torch.bool)
         self._raw_probs = probs.detach().cpu().tolist()[0]
         self._action_mask = mask.detach().cpu().tolist()
         probs = probs.masked_fill(~mask.unsqueeze(0), 0.0)
@@ -295,7 +374,7 @@ class RoleAwareREINFORCE(LearningPolicy):
         threshold = getattr(self, "threshold_multiplier", 1.5) / available_count
         candidates = torch.nonzero(probs[0, :-1] >= threshold).flatten().tolist()
         self._threshold_candidates = list(candidates)
-        if first_index < stop_index and first_index not in candidates:
+        if first_index < stop_index and first_index not in candidates and not candidates:
             candidates.append(first_index)
         ordered = sorted(
             set(candidates),
@@ -303,6 +382,35 @@ class RoleAwareREINFORCE(LearningPolicy):
             reverse=True,
         )
         return ordered[:self.max_width] or [first_index], distribution
+
+    def _choose_baseline_threshold(self, probs, capacity):
+        """Replicate the baseline threshold/fallback selector over persona agents.
+
+        The baseline has no internal STOP action.  Its terminate persona remains an
+        ordinary selectable agent, so the policy samples only the N agent logits.
+        """
+        agent_count = len(self.agent_hash_list)
+        threshold = self.baseline_threshold_numerator / agent_count
+        agent_probs = probs[0, :agent_count]
+        candidates = torch.nonzero(agent_probs > threshold).flatten().tolist()
+        self._threshold_candidates = list(candidates)
+        distribution = torch.distributions.Categorical(agent_probs)
+        if candidates:
+            indices = sorted(
+                candidates,
+                key=lambda index: agent_probs[index].detach().item(),
+                reverse=True,
+            )
+        else:
+            available_count = int(torch.count_nonzero(agent_probs > 0).item())
+            sample_count = min(capacity, self.max_width, available_count)
+            if sample_count < 1:
+                raise RuntimeError("No available agent for baseline threshold routing")
+            indices = torch.multinomial(
+                agent_probs, sample_count, replacement=False
+            ).tolist()
+        self._sampled_first = indices[0] if indices else None
+        return indices[: min(capacity, self.max_width)], distribution, threshold
 
     def begin_task(self, audit=None):
         self.trajectories = []
@@ -317,43 +425,76 @@ class RoleAwareREINFORCE(LearningPolicy):
     def propose(self, global_info, capacity):
         if capacity < 1:
             raise ValueError("Routing requires reserved capacity")
-        allow_stop = global_info.path_id != -1
+        baseline_sampling = self.routing_mode == "baseline_threshold_v1"
+        allow_stop = global_info.path_id != -1 and not baseline_sampling
         from contextlib import nullcontext
         scope = (self.audit.call_scope(path_uid=getattr(global_info, "path_uid", "root"),
                                       purpose="task_encoder") if self.audit else nullcontext())
         with scope:
             probs = self._distribution(global_info, allow_stop)
-        stop_index = len(self.agent_hash_list)
+        stop_index = len(self.agent_hash_list) if not baseline_sampling else None
         if self.routing_mode == "categorical_set_v2":
             selection = sample_ordered(probs, min(capacity, self.selection_count), stop_index)
             indices = selection.indices
             joint = selection.log_prob
             entropy = selection.entropy
             conditional = selection.conditional_probs
+            threshold = None
+        elif baseline_sampling:
+            indices, distribution, threshold = self._choose_baseline_threshold(
+                probs, capacity
+            )
+            joint = None
+            entropy = distribution.entropy().mean()
+            conditional = None
         else:
             indices, distribution = self._choose(probs, allow_stop)
             joint = None
             entropy = distribution.entropy().mean()
             conditional = None
+            count = max(1, sum(bool(v) for v in self.agent_graph.availability_mask))
+            threshold = self.threshold_multiplier / count
         decision_id = self.audit.new_id("decision") if self.audit else f"decision-{len(self.decisions)}"
-        actions = [ORCHESTRATOR_STOP if i == stop_index else self.agent_hash_list[i] for i in indices]
+        actions = [
+            ORCHESTRATOR_STOP if stop_index is not None and i == stop_index
+            else self.agent_hash_list[i]
+            for i in indices
+        ]
         proposal = dict(decision_id=decision_id, actions=actions, indices=indices, probs=probs,
                         joint_log_prob=joint, entropy=entropy, capacity=capacity)
         if self.audit:
-            count = max(1, sum(bool(v) for v in self.agent_graph.availability_mask))
             self.audit.emit("routing_decision", decision_id=decision_id,
                 path_uid=getattr(global_info, "path_uid", "root"), allow_stop=allow_stop,
-                p_stop=float(probs[0, stop_index].detach()), probabilities=probs[0],
-                raw_probabilities=self._raw_probs, mask=self._action_mask,
+                p_stop=(float(probs[0, stop_index].detach()) if stop_index is not None else None),
+                probabilities=probs[0], raw_probabilities=self._raw_probs, mask=self._action_mask,
                 capacity=capacity, steps_completed=len(global_info.workflow.workflow),
                 remaining_depth=getattr(global_info, "remaining_depth", None),
                 mode=self.routing_mode, entropy=entropy, selected=actions,
-                threshold=self.threshold_multiplier/count if joint is None else None,
+                threshold=threshold,
                 sampled_first=getattr(self, "_sampled_first", None) if joint is None else indices[0],
                 threshold_candidates=getattr(self, "_threshold_candidates", []) if joint is None else [],
                 conditional_probs=conditional, joint_log_prob=joint,
                 estimator=self.estimator_version)
         return proposal
+
+    @staticmethod
+    def _threshold_surplus_for_indices(probs, indices, threshold, cap):
+        """Return a differentiable, capped log-ratio above the legacy threshold."""
+        if not indices:
+            return probs.new_zeros(())
+        selected_probs = probs[0, indices]
+        return torch.log(selected_probs / threshold).clamp(min=0.0, max=cap).mean()
+
+    def _selected_threshold_surplus(self, proposal, selected_indices):
+        if self.threshold_margin_coef <= 0:
+            return None
+        stop_index = len(self.agent_hash_list)
+        non_stop_indices = [index for index in selected_indices if index != stop_index]
+        available_count = max(1, sum(bool(v) for v in self.agent_graph.availability_mask))
+        threshold = self.threshold_multiplier / available_count
+        return self._threshold_surplus_for_indices(
+            proposal["probs"], non_stop_indices, threshold, self.threshold_margin_cap
+        )
 
     def accept(self, proposal, parent_uid, allocations):
         accepted = [item["action"] for item in allocations]
@@ -361,6 +502,12 @@ class RoleAwareREINFORCE(LearningPolicy):
             raise RuntimeError("Sampling/execution mismatch: capacity must be reserved before sampling")
         if not allocations:
             return
+        selected_indices = [
+            len(self.agent_hash_list) if item["action"] == ORCHESTRATOR_STOP
+            else self.agent_hash_list.index(item["action"])
+            for item in allocations
+        ]
+        threshold_surplus = self._selected_threshold_surplus(proposal, selected_indices)
         parent_index = self._path_lookup.get(parent_uid)
         prefix = ([dict(step) for step in self.trajectories[parent_index]]
                   if parent_index is not None else [])
@@ -373,13 +520,22 @@ class RoleAwareREINFORCE(LearningPolicy):
             action = item["action"]
             index = len(self.agent_hash_list) if action == ORCHESTRATOR_STOP else self.agent_hash_list.index(action)
             log_prob = torch.log(proposal["probs"][0, index]).reshape(1)
+            initial_reward = (
+                0.0
+                if self.reward_mode == "baseline_compatible_v1"
+                else (0.0 if action == ORCHESTRATOR_STOP else -self.step_penalty)
+            )
             self.trajectories[self._path_lookup[item["path_uid"]]].append(dict(
                 log_prob=log_prob, action=action, action_id=item["action_id"],
-                decision_id=proposal["decision_id"], reward=0.0 if action == ORCHESTRATOR_STOP else -self.step_penalty,
+                decision_id=proposal["decision_id"], reward=initial_reward,
                 finalized=False))
         self.entropies.append(proposal["entropy"])
-        self.decisions.append(dict(decision_id=proposal["decision_id"],
-            log_prob=proposal["joint_log_prob"], actions=[dict(item) for item in allocations]))
+        self.decisions.append(dict(
+            decision_id=proposal["decision_id"],
+            log_prob=proposal["joint_log_prob"],
+            actions=[dict(item) for item in allocations],
+            threshold_surplus=threshold_surplus,
+        ))
 
     def forward(self, global_info):
         # Compatibility API; the runtime uses propose/accept with stable path IDs.
@@ -475,12 +631,155 @@ class RoleAwareREINFORCE(LearningPolicy):
         except OSError as error:
             logger.warning("Could not write trajectory reward trace: %s", error)
 
+    def _baseline_step_scale(self, step_index):
+        """Return the baseline logarithmic step scale for a zero-based action step."""
+        config = self.baseline_reward_config
+        scale = float(config.get("step_scale", 0.1))
+        growth_rate = float(config.get("growth_rate", 1.0))
+        if growth_rate <= 0:
+            raise ValueError("baseline_compatible.growth_rate must be positive")
+        normalized_step = (int(step_index) + 1) / (self.max_depth + 1)
+        value = scale * math.log(1.0 + growth_rate * normalized_step) / math.log(
+            1.0 + growth_rate
+        )
+        return scale - value if bool(config.get("inverse", False)) else value
+
+    def _baseline_action_factor(self, runtime_action):
+        payload = getattr(runtime_action, "action", {}) or {}
+        action_name = str(payload.get("action", "")).strip().lower()
+        web_actions = {
+            str(name).strip().lower()
+            for name in self.baseline_reward_config.get(
+                "web_actions",
+                ["search_bing", "search_arxiv", "access_website"],
+            )
+        }
+        if action_name in web_actions:
+            return float(self.baseline_reward_config.get("web_action_factor", -1.5))
+        return float(self.baseline_reward_config.get("default_action_factor", -1.0))
+
+    @staticmethod
+    def _runtime_action_name(runtime_action):
+        payload = getattr(runtime_action, "action", {}) or {}
+        return str(payload.get("action", "")).strip().lower()
+
+    def _finalize_baseline_compatible(self, transition, global_info, trajectory, path_id):
+        """Assign baseline reward terms without changing the role-aware router."""
+        actions_by_id = {
+            getattr(action, "action_id", None): action
+            for action in global_info.workflow.workflow
+        }
+        normalization = float(
+            self.baseline_reward_config.get("action_cost_normalization", 100000.0)
+        )
+        if normalization <= 0:
+            raise ValueError(
+                "baseline_compatible.action_cost_normalization must be positive"
+            )
+
+        action_terms = []
+        executed_steps = 0
+        for index, step in enumerate(trajectory):
+            if step["action"] == ORCHESTRATOR_STOP:
+                continue
+            runtime_action = actions_by_id.get(step.get("action_id"))
+            if runtime_action is None:
+                # A missing runtime action can only occur for an internal STOP.  Keep
+                # the transition neutral rather than assigning another path's cost.
+                step["reward"] = 0.0
+                continue
+            action_name = self._runtime_action_name(runtime_action)
+            if action_name == "terminate":
+                step["reward"] = 0.0
+                continue
+            scale = self._baseline_step_scale(executed_steps)
+            factor = self._baseline_action_factor(runtime_action)
+            action_cost = float(getattr(runtime_action, "cost", 0.0))
+            reward = factor * scale * action_cost / normalization
+            step["reward"] = reward
+            action_terms.append(
+                {
+                    "trajectory_index": index,
+                    "action_id": step.get("action_id"),
+                    "action_name": action_name,
+                    "step_scale": scale,
+                    "action_cost": action_cost,
+                    "factor": factor,
+                    "reward": reward,
+                }
+            )
+            executed_steps += 1
+
+        task_reward = float(transition.get("reward", 0.0))
+        terminal_factor = float(
+            self.baseline_reward_config.get("terminal_factor", 0.5)
+        )
+        # ContinuousREINFORCE calls logarithmic_cost(len(trajectory)): this
+        # includes an explicit terminator when one was selected.
+        terminal_scale = self._baseline_step_scale(len(trajectory))
+        terminal_reward = (
+            task_reward + terminal_factor * terminal_scale
+            if task_reward > 0
+            else task_reward - terminal_factor * terminal_scale
+        )
+
+        # A selected internal STOP has no runtime Action.  At a depth limit the
+        # terminal term is attached to the last executed action, preserving the
+        # role-aware runtime while exposing the same scalar reward components.
+        trajectory[-1]["reward"] += terminal_reward
+        trajectory[-1]["finalized"] = True
+        trajectory[-1]["total_tokens"] = global_info.total_tokens
+        trajectory[-1]["total_cost"] = global_info.total_cost
+        trajectory[-1]["metrics"] = transition.get("metrics", {})
+        trajectory[-1]["candidate_output"] = transition.get("candidate_output", "")
+        path_reward = sum(float(step["reward"]) for step in trajectory)
+        action_penalty_total = -sum(term["reward"] for term in action_terms)
+
+        breakdown = {
+            "reward_mode": self.reward_mode,
+            "path_id": path_id,
+            "task_reward": task_reward,
+            "skywork_raw": None,
+            "skywork_centered": None,
+            "skywork_weighted": 0.0,
+            "skywork_status": "disabled",
+            "action_reward_terms": action_terms,
+            "executed_steps": executed_steps,
+            "terminal_scale": terminal_scale,
+            "terminal_reward": terminal_reward,
+            "step_penalty": action_penalty_total,
+            "normalized_token_cost": 0.0,
+            "token_cost_penalty": 0.0,
+            "path_reward": path_reward,
+            "total_tokens": global_info.total_tokens,
+            "total_cost": global_info.total_cost,
+            "metrics": transition.get("metrics", {}),
+            "scorer_model": None,
+        }
+        trajectory[-1]["reward_breakdown"] = breakdown
+        self.rewards_history.append(path_reward)
+        self.reward_breakdowns.append(breakdown)
+        self._write_reward_trace(global_info, breakdown)
+        if getattr(self, "audit", None):
+            self.audit.emit(
+                "reward_assigned",
+                path_uid=transition.get("path_uid"),
+                decision_ids=[step.get("decision_id") for step in trajectory],
+                action_ids=[step.get("action_id") for step in trajectory],
+                **breakdown,
+            )
+
     def finalize_task(self, transition, global_info):
         path_id = getattr(self, "_path_lookup", {}).get(
             transition.get("path_uid"), int(transition.get("path_id", 0)))
         if path_id >= len(self.trajectories) or not self.trajectories[path_id]:
             return
         trajectory = self.trajectories[path_id]
+        if self.reward_mode == "baseline_compatible_v1":
+            self._finalize_baseline_compatible(
+                transition, global_info, trajectory, path_id
+            )
+            return
         task_reward = float(transition.get("reward", 0.0))
         normalized_cost = float(global_info.total_cost) / self.cost_normalization
         token_cost_penalty = self.token_cost_weight * normalized_cost
@@ -562,6 +861,18 @@ class RoleAwareREINFORCE(LearningPolicy):
             loss = torch.stack(losses).sum()
         if self.entropies:
             loss -= self.entropy_coef * torch.stack(self.entropies).sum()
+        threshold_surpluses = [
+            decision["threshold_surplus"]
+            for decision in self.decisions
+            if decision.get("threshold_surplus") is not None
+        ]
+        if threshold_surpluses:
+            threshold_margin_mean = torch.stack(threshold_surpluses).mean()
+            threshold_margin_loss = -self.threshold_margin_coef * threshold_margin_mean
+            loss += threshold_margin_loss
+        else:
+            threshold_margin_mean = loss.new_zeros(())
+            threshold_margin_loss = loss.new_zeros(())
         optimizer_stepped = False
         gradient_norm = None
         if self.optimizer_updates_enabled:
@@ -578,6 +889,8 @@ class RoleAwareREINFORCE(LearningPolicy):
             "optimizer_stepped": optimizer_stepped,
             "task_return": float(task_return), "return_variance": float(np.var(returns_all)),
             "gradient_norm": gradient_norm,
+            "threshold_margin_mean": float(threshold_margin_mean.detach().cpu().item()),
+            "threshold_margin_loss": float(threshold_margin_loss.detach().cpu().item()),
             "estimator": getattr(self, "estimator_version", "legacy_surrogate_v1"),
         }
         if getattr(self, "audit", None):
@@ -595,6 +908,7 @@ class RoleAwareREINFORCE(LearningPolicy):
             "routing_version": "2",
             "objective_version": self.objective_version,
             "estimator_version": self.estimator_version,
+            "reward_mode": self.reward_mode,
             "model_state_dict": self.policy_network.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "state_dim": self.policy_network.state_dim,
@@ -625,6 +939,11 @@ class RoleAwareREINFORCE(LearningPolicy):
             raise ValueError("Estimator version mismatch")
         if load_optimizer and checkpoint.get("objective_version") != self.objective_version:
             raise ValueError("Objective version mismatch")
+        source_reward_mode = checkpoint.get("reward_mode", "role_aware_v1")
+        if load_optimizer and source_reward_mode != self.reward_mode:
+            raise ValueError(
+                "Reward mode mismatch; start a new run or use explicit weights-only evaluation"
+            )
         if load_optimizer and checkpoint.get("routing_version") != "2":
             raise ValueError("Routing version mismatch")
         self.policy_network.load_state_dict(checkpoint["model_state_dict"], strict=True)

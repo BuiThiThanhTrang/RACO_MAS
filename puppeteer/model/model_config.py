@@ -35,6 +35,53 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         max_tokens=128000,
         description="OpenAI GPT-4o model"
     ),
+
+    "qwen-3.5-9b": ModelConfig(
+        name="qwen-3.5-9b",
+        function_name="query_qwen3_5_9b",
+        api_model_name="Qwen/Qwen3.5-9B:featherless-ai",
+        provider="openai_compatible",
+        api_profile="huggingface_router",
+        model_size=9,
+        max_tokens=8192,
+        description="Qwen 3.5 9B via Hugging Face Inference Providers on Featherless AI",
+    ),
+
+    "qwen-3.5-4b": ModelConfig(
+        name="qwen-3.5-4b",
+        function_name="query_qwen3_5_4b",
+        api_model_name="Qwen/Qwen3.5-4B:featherless-ai",
+        provider="openai_compatible",
+        api_profile="huggingface_router",
+        model_size=4,
+        max_tokens=8192,
+        description="Qwen 3.5 4B via Hugging Face Inference Providers on Featherless AI",
+    ),
+
+    "gemma-3-12b-it": ModelConfig(
+        name="gemma-3-12b-it",
+        function_name="query_gemma_3_12b_it",
+        api_model_name="google/gemma-3-12b-it:featherless-ai",
+        provider="openai_compatible",
+        api_profile="huggingface_router",
+        model_size=12,
+        max_tokens=8192,
+        description="Gemma 3 12B IT via Hugging Face Inference Providers on Featherless AI",
+    ),
+
+    "phi-4-mini-instruct": ModelConfig(
+        name="phi-4-mini-instruct",
+        function_name="query_phi_4_mini_instruct",
+        api_model_name="microsoft/Phi-4-mini-instruct:featherless-ai",
+        provider="openai_compatible",
+        api_profile="huggingface_router",
+        model_size=4,
+        # Featherless accepts this routed model through 3,072 output tokens,
+        # but rejects a 4,096-token request with HTTP 400.
+        max_tokens=3072,
+        description="Phi-4 Mini Instruct via Hugging Face Inference Providers on Featherless AI (3,072 output-token provider limit)",
+    ),
+
     "qwen-2.5-14b": ModelConfig(
         name = "qwen-2.5-14b",
         function_name="query_qwen2_5_14b",
@@ -43,7 +90,7 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         api_profile="huggingface_router",
         model_size=14,
         max_tokens=8192,    
-        description="Qwen 2.5 14B Instruct model via Hugging Face router on Featherless AI"
+        description="Qwen 2.5 14B Instruct model via Hugging Face router on featherless-ai"
     ),
 
     "qwen-2.5-7b": ModelConfig(

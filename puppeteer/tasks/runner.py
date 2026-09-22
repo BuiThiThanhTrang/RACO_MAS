@@ -132,6 +132,7 @@ class BenchmarkRunner:
             keep_snapshots=getattr(checkpoint_config, "keep_snapshots", 3),
         )
         self.policy_mode = str(policy_config.get("policy_mode", "initialized"))
+        profile_source_configured = profile_source is not None
         self.profile_source = str(
             profile_source
             or ("checkpoint" if checkpoint_path is not None else "priors")
@@ -181,6 +182,9 @@ class BenchmarkRunner:
         elif (
             self.dataset_mode == "train"
             and self.policy_mode == "train"
+            and not (
+                profile_source_configured and self.profile_source == "priors"
+            )
             and getattr(
                 getattr(profile_config, "initialization", None),
                 "required_for_train",
@@ -281,8 +285,15 @@ class BenchmarkRunner:
             return data_start, data_limit
         if int(self.progress["initial_data_start"]) != data_start:
             raise ValueError("Resume data_start does not match checkpoint")
-        if self.progress.get("requested_data_limit") != data_limit:
-            raise ValueError("Resume data_limit does not match checkpoint")
+        previous_limit = self.progress.get("requested_data_limit")
+        if previous_limit != data_limit:
+            # A resumed training run may extend its total window, but it must
+            # retain the original prefix and may never shrink or reinterpret it.
+            if previous_limit is None or data_limit is None or int(data_limit) < int(previous_limit):
+                raise ValueError(
+                    "Resume data_limit must match or increase the checkpoint limit"
+                )
+            self.progress["requested_data_limit"] = int(data_limit)
         completed = int(self.progress.get("completed_items", 0))
         remaining = None if data_limit is None else max(0, int(data_limit) - completed)
         return int(self.progress["next_split_offset"]), remaining

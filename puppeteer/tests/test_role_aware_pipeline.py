@@ -1,4 +1,5 @@
 import json
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,8 +11,14 @@ from agent.register.persona_loader import load_teammate_specs
 from agent.register.register import AgentRegister
 from config.runtime import load_experiment_config
 from inference.graph.agent_graph import AgentGraph
-from inference.policy.role_aware_reinforce import CandidateScoringPolicyNetwork, RoleAwareREINFORCE
+from inference.reasoning.reasoning import GraphReasoning
+from inference.policy.role_aware_reinforce import (
+    ORCHESTRATOR_STOP,
+    CandidateScoringPolicyNetwork,
+    RoleAwareREINFORCE,
+)
 from role_aware.evidence import PathTerminalEvidence, ProfileEvidenceAccumulator
+from role_aware.capability_scopes import ROLE_CAPABILITY_SCOPES
 from role_aware.profile_store import ProfileStore
 from tasks import creative_writing, gsm_hard, mmlu_pro, srdd
 from tasks.evaluator import BenchmarkEvaluator
@@ -60,6 +67,18 @@ class FakeEvaluator:
 
 
 class RoleAwarePipelineTests(unittest.TestCase):
+    def test_binary_task_reward_defaults_and_zero_incorrect_ablation(self):
+        reasoning = object.__new__(GraphReasoning)
+        reasoning.runtime_config = {}
+        self.assertEqual(reasoning._binary_task_reward(True), 1.0)
+        self.assertEqual(reasoning._binary_task_reward(False), -1.0)
+
+        reasoning.runtime_config = {
+            "task_reward": {"correct": 1.0, "incorrect": 0.0}
+        }
+        self.assertEqual(reasoning._binary_task_reward(True), 1.0)
+        self.assertEqual(reasoning._binary_task_reward(False), 0.0)
+
     def test_s0_has_exactly_two_teammates_for_each_of_eleven_roles(self):
         specs = load_teammate_specs(S0)
         counts = {}
@@ -73,6 +92,21 @@ class RoleAwarePipelineTests(unittest.TestCase):
     def test_s3_is_fully_unseen_mistral_pool(self):
         specs = load_teammate_specs(S3)
         self.assertTrue(all("mistral" in spec.backbone.lower() for spec in specs))
+
+    def test_every_schema_v1_pool_role_has_an_evidence_scope(self):
+        """A selected role must never crash evidence flushing at task end."""
+        pool_dir = PROJECT / "personas" / "role_aware"
+        roles = set()
+        for pool_path in pool_dir.glob("*.jsonl"):
+            records = [
+                json.loads(line)
+                for line in pool_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            if records and "role_card" in records[0]:
+                roles.update(record["role_card"]["role_name"] for record in records)
+        self.assertTrue(roles)
+        self.assertTrue(roles.issubset(ROLE_CAPABILITY_SCOPES), roles - set(ROLE_CAPABILITY_SCOPES))
 
     def test_closed_book_mask_disables_python_teammates(self):
         specs = load_teammate_specs(S0)
@@ -208,6 +242,116 @@ class RoleAwarePipelineTests(unittest.TestCase):
                 timeout_detected=True,
             )
         self.assertTrue(flag, output)
+
+    def test_threshold_surplus_rewards_larger_threshold_margins(self):
+        probs = torch.tensor([[0.060, 0.049, 0.040]], requires_grad=True)
+        threshold = 0.04772727272727273
+        high = RoleAwareREINFORCE._threshold_surplus_for_indices(
+            probs, [0], threshold, cap=0.25
+        )
+        low = RoleAwareREINFORCE._threshold_surplus_for_indices(
+            probs, [1], threshold, cap=0.25
+        )
+        below = RoleAwareREINFORCE._threshold_surplus_for_indices(
+            probs, [2], threshold, cap=0.25
+        )
+        self.assertGreater(high.item(), low.item())
+        self.assertGreater(low.item(), 0.0)
+        self.assertEqual(below.item(), 0.0)
+        (high + low + below).backward()
+        self.assertTrue(torch.isfinite(probs.grad).all())
+
+    def test_threshold_surplus_is_disabled_with_zero_coefficient(self):
+        policy = object.__new__(RoleAwareREINFORCE)
+        policy.threshold_margin_coef = 0.0
+        policy.agent_hash_list = ["agent-0", "agent-1"]
+        policy.agent_graph = SimpleNamespace(availability_mask=[True, True])
+        policy.threshold_multiplier = 1.0
+        policy.threshold_margin_cap = 0.25
+        result = policy._selected_threshold_surplus(
+            {"probs": torch.tensor([[0.6, 0.4, 0.0]], requires_grad=True)}, [0]
+        )
+        self.assertIsNone(result)
+
+    def test_baseline_compatible_reward_uses_action_cost_and_terminal_term(self):
+        policy = object.__new__(RoleAwareREINFORCE)
+        policy.reward_mode = "baseline_compatible_v1"
+        policy.baseline_reward_config = {
+            "step_scale": 0.1,
+            "growth_rate": 1.0,
+            "inverse": False,
+            "action_cost_normalization": 100000.0,
+            "default_action_factor": -1.0,
+            "web_action_factor": -1.5,
+            "terminal_factor": 0.5,
+        }
+        policy.max_depth = 2
+        policy.rewards_history = []
+        policy.reward_breakdowns = []
+        policy.trajectory_reward_config = {}
+        policy.audit = None
+
+        normal = SimpleNamespace(
+            action_id="action-1",
+            action={"action": "reasoning"},
+            cost=28000,
+        )
+        trajectory = [
+            {
+                "action": "agent-1",
+                "action_id": "action-1",
+                "decision_id": "decision-1",
+                "reward": 0.0,
+                "finalized": False,
+            },
+            {
+                "action": ORCHESTRATOR_STOP,
+                "action_id": "action-2",
+                "decision_id": "decision-2",
+                "reward": 0.0,
+                "finalized": False,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            global_info = SimpleNamespace(
+                workflow=SimpleNamespace(workflow=[normal]),
+                total_tokens=1000,
+                total_cost=28000,
+                workpath=directory,
+            )
+            policy._finalize_baseline_compatible(
+                {"reward": 1.0, "path_uid": "path-1", "metrics": {}},
+                global_info,
+                trajectory,
+                0,
+            )
+
+        first_scale = 0.1 * math.log(4 / 3) / math.log(2)
+        self.assertAlmostEqual(trajectory[0]["reward"], -first_scale * 0.28)
+        self.assertAlmostEqual(trajectory[1]["reward"], 1.05)
+        breakdown = policy.reward_breakdowns[-1]
+        self.assertEqual(breakdown["reward_mode"], "baseline_compatible_v1")
+        self.assertEqual(len(breakdown["action_reward_terms"]), 1)
+        self.assertAlmostEqual(breakdown["terminal_reward"], 1.05)
+        self.assertAlmostEqual(breakdown["path_reward"], 1.05 - first_scale * 0.28)
+
+    def test_baseline_threshold_sampling_matches_threshold_and_fallback_rules(self):
+        policy = object.__new__(RoleAwareREINFORCE)
+        policy.agent_hash_list = [f"agent-{index}" for index in range(4)]
+        policy.baseline_threshold_numerator = 2.0
+        policy.max_width = 4
+
+        threshold_selected, _, threshold = policy._choose_baseline_threshold(
+            torch.tensor([[0.60, 0.20, 0.10, 0.10]]), capacity=4
+        )
+        self.assertEqual(threshold, 0.5)
+        self.assertEqual(threshold_selected, [0])
+
+        fallback_selected, _, threshold = policy._choose_baseline_threshold(
+            torch.tensor([[0.25, 0.25, 0.25, 0.25]]), capacity=4
+        )
+        self.assertEqual(threshold, 0.5)
+        self.assertEqual(set(fallback_selected), {0, 1, 2, 3})
 
     def test_dynamic_routing_threshold_uses_available_agent_count(self):
         policy = object.__new__(RoleAwareREINFORCE)

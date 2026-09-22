@@ -1,0 +1,102 @@
+run_id: mmlu_train_baseline_reward_ablation_s42_4
+mode: train
+seed: 42
+personas_path: personas\role_aware\puppeteer_model_card_role_aware_pool.jsonl
+output_dir: runs
+
+dataset:
+  name: MMLU-Pro
+  mode: train
+  data_limit: 400
+  data_start: 0
+  split_seed: 42
+  reference_items_per_teammate: 50
+  probe_items_per_teammate: 10
+
+tools:
+  allowed: [run_python]
+
+profiles:
+  alpha: 0.0001
+  reset_scope: run
+  update_strategy: role_task_intersection
+  evidence_level: path_terminal
+  deduplicate_within_path: true
+  aggregate_parallel_evidence: true
+  update_global_reliability: true
+  update_role_adherence_separately: true
+  initialization:
+    source: priors
+    path: null
+    required_for_train: false
+
+checkpoint:
+  interval_items: 5
+  snapshot_interval_items: 5
+  keep_snapshots: 5
+
+policy:
+  type: role_aware_reinforce
+  device:
+    type: cpu
+  paths:
+    checkpoint_path: checkpoint/role_aware
+    model_path: null
+    load_policy: false
+  cost:
+    scale: 0.1
+    growth_rate: 1.0
+    inverse: false
+
+
+  training:
+    loading: false
+    training: true
+    # Keep optimization settings equal to the current role-aware control.
+    # This isolates the effect of the reward design.
+    learning_rate: 0.00005
+    gamma: 0.9
+    entropy_coef: -0.1
+    # Explicitly disables the separate threshold-surplus regularizer.
+    threshold_margin_coef: 0.0
+    lambda_kl_loss: 0.0
+
+  reward:
+    mode: baseline_compatible_v1
+    baseline_compatible:
+      step_scale: 0.1
+      growth_rate: 1.0
+      inverse: false
+      action_cost_normalization: 100000.0
+      default_action_factor: -1.0
+      web_action_factor: -1.5
+      terminal_factor: 0.5
+      web_actions: [search_bing, search_arxiv, access_website]
+
+  policy_mode: train
+  routing:
+    # Baseline: threshold = 2 / number_of_persona_agents. If no agent
+    # exceeds it, sample up to the available path width without replacement.
+    mode: baseline_threshold_v1
+    baseline_threshold_numerator: 1.5
+    allow_policy_transfer: true
+
+global_config:
+  task_reward:
+    correct: 1.0
+    incorrect: -1.0
+
+  # Baseline reward is self-contained; do not mix it with Skywork.
+  trajectory_reward:
+    enabled: false
+
+  graph:
+    max_width: 3
+    max_depth: 2
+
+  audit:
+    enabled: true
+
+  aggregation:
+    mode: legacy
+    seed: 42

@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 ROLE_CAPABILITY_SCOPES = {
+    # Tool-backed research roles use the tool to acquire evidence, then reason
+    # about and integrate it.  ``tool_use`` does not receive MMLU-Pro evidence
+    # because it is outside that task's capability scope.
+    "File Analyst": ("tool_use", "domain_reasoning", "general_reasoning", "integration"),
+    "Academic Researcher": ("tool_use", "domain_reasoning", "general_reasoning", "integration"),
+    "Web Researcher": ("tool_use", "domain_reasoning", "general_reasoning", "integration"),
+    "Website Reader": ("tool_use", "domain_reasoning", "general_reasoning", "integration"),
     "Planner / Decomposer": ("planning", "general_reasoning", "integration"),
+    "Problem Decomposer": ("planning", "general_reasoning", "verification"),
     "General Reasoner": ("general_reasoning", "verification", "integration"),
     "Quantitative Reasoner": ("quantitative_reasoning", "general_reasoning", "verification"),
     "Domain Reasoner": ("domain_reasoning", "general_reasoning", "verification"),
@@ -9,9 +17,11 @@ ROLE_CAPABILITY_SCOPES = {
     "Commonsense Generator": ("commonsense_generation", "general_reasoning", "integration"),
     "Critic / Verifier": ("verification", "general_reasoning"),
     "Reflector": ("verification", "planning", "repair"),
+    "Summarizer": ("integration", "general_reasoning", "verification"),
     "Modifier / Repair": ("repair", "verification", "general_reasoning"),
     "Integrator / Concluder": ("integration", "general_reasoning", "verification"),
     "Python Tool Agent": ("tool_use", "software_engineering", "quantitative_reasoning", "verification"),
+    "Stop Controller": ("planning", "verification", "integration"),
 }
 
 TASK_CAPABILITY_SCOPES = {

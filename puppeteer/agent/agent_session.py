@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field
+import re
 
 _BOUND_SESSION = ContextVar("agent_session", default=None)
 
@@ -18,16 +19,63 @@ class AgentSession:
 
 @dataclass
 class PathRuntimeContext:
+    """Conversation state for a single branch of the reasoning graph.
+
+    ``agent_turns`` preserves the baseline order of selected agents.  Routing
+    reconstructs their simplified dialog histories from the sessions in this
+    context, so sibling paths cannot share dialog state.
+    """
     path_uid: str
     sessions: dict = field(default_factory=dict)
+    agent_turns: list = field(default_factory=list)
 
     def session(self, teammate_id):
         if teammate_id not in self.sessions:
             self.sessions[teammate_id] = AgentSession(f"{self.path_uid}/{teammate_id}")
         return self.sessions[teammate_id]
 
+    def record_agent_turn(self, teammate_id):
+        self.agent_turns.append(str(teammate_id))
+
+    @staticmethod
+    def _simplified_dialog_history(dialog_history):
+        """Match Agent.simplified_dialog_history from the baseline runtime."""
+        result = []
+        for message in dialog_history:
+            copied = deepcopy(message)
+            if copied.get("role") == "user":
+                copied["content"] = re.sub(r"\*.*?\*", "", copied.get("content", ""))
+            result.append(copied)
+        return result
+
+    def baseline_orchestrator_messages(self, question):
+        """Return the baseline policy input for this path only.
+
+        The baseline concatenates the simplified conversation of every agent in
+        its selected-role sequence. Repeated selections intentionally repeat
+        that agent's current dialog history.
+        """
+        if not self.agent_turns:
+            return [{
+                "role": "system",
+                "content": "You are an assistant. Your task is to {}".format(question),
+            }]
+        history = []
+        for teammate_id in self.agent_turns:
+            session = self.sessions.get(teammate_id)
+            if session is not None:
+                history.extend(self._simplified_dialog_history(session.dialog_history))
+        return history or [{
+            "role": "system",
+            "content": "You are an assistant. Your task is to {}".format(question),
+        }]
+
     def fork(self, path_uid):
-        result = PathRuntimeContext(path_uid, deepcopy(self.sessions))
+        result = PathRuntimeContext(
+            path_uid=path_uid,
+            sessions=deepcopy(self.sessions),
+            agent_turns=deepcopy(self.agent_turns),
+        )
         for teammate, session in result.sessions.items():
             session.session_id = f"{path_uid}/{teammate}"
             session._activated = False

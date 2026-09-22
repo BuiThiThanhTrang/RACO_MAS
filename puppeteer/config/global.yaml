@@ -33,9 +33,9 @@ trajectory_reward:
 
 # Step count and model-size/token cost are distinct, explicit penalties.
 cost_reward:
-  step_penalty: 0.01
-  token_cost_weight: 0.01
-  normalization: 100000.0
+  step_penalty: 0.00
+  token_cost_weight: 0.00
+  normalization: 1000.0
 
 # LEGACY BASELINE ONLY: ContinuousREINFORCE reads this block. The Role-Aware
 # policy does not read it; RoleAwareREINFORCE uses task_analyzer below.
@@ -86,8 +86,8 @@ api_keys:
   bing_api_key: ""  # bing api key for web search (optional)
 
 max_retry_times: 3  # maximum number of times to retry API calls
-retry_wait_min: 1  # minimum seconds between chat API retries
-retry_wait_max: 3  # maximum seconds between chat API retries
+retry_wait_min: 20  # minimum seconds between chat API retries
+retry_wait_max: 30  # maximum seconds between chat API retries
 max_json_reformat_turns: 3  # maximum number of times to retry JSON parsing/reformatting
 
 # Full agent dialog remains in memory. Only the request copy sent to an LLM is

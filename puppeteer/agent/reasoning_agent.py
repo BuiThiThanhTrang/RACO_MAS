@@ -56,7 +56,7 @@ class Reasoning_Agent(Agent):
         prompt_filepath = "prompts/general/action_decide.json"
         with open(prompt_filepath, "r") as f:
             select_prompt = json.load(f)
-        
+
         if external_tools_enabled:
             query_prompt = "\n".join(select_prompt['action_query']).format(
                 global_info.workflow.valid_actions,

@@ -12,7 +12,7 @@ SEED = 42
 
 SIZES = {
     "gsm_hard": {"train": 200, "dev": 100, "reference": 100, "probe": 10, "final": 909},
-    "mmlu_pro": {"train": 200, "dev": 140, "reference": 280, "probe": 10, "final": 2000},
+    "mmlu_pro": {"train": 400, "dev": 140, "reference": 280, "probe": 10, "final": 2000},
     "srdd": {"train": 200, "dev": 100, "reference": 100, "probe": 10, "final": 790},
     "cw": {"train": 80, "dev": 20, "reference": 40, "probe": 10, "final": 50},
 }

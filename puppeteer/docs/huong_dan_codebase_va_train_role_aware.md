@@ -180,21 +180,23 @@ Mười capability dimensions:
 - 11 role;
 - 2 teammate cho mỗi role;
 - backbone distribution:
-  - 6 × `qwen-2.5-7b`;
-  - 6 × `llama-3.2-3b`;
-  - 5 × `qwen-2.5-14b`;
-  - 5 × `llama-3.1-8b`.
+  - 6 × `qwen-3.5-9b`;
+  - 6 × `qwen-3.5-4b`;
+  - 5 × `gemma-3-12b-it`;
+  - 5 × `phi-4-mini-instruct`.
 
 Bốn API model hiện được pin trong `model/model_config.py`:
 
 | Internal key | API model |
 |---|---|
-| `qwen-2.5-7b` | `Qwen/Qwen2.5-7B-Instruct:featherless-ai` |
-| `llama-3.2-3b` | `meta-llama/Llama-3.2-3B-Instruct:featherless-ai` |
-| `qwen-2.5-14b` | `Qwen/Qwen2.5-14B-Instruct:featherless-ai` |
-| `llama-3.1-8b` | `meta-llama/Llama-3.1-8B-Instruct:novita` |
+| `qwen-3.5-9b` | `Qwen/Qwen3.5-9B:featherless-ai` |
+| `qwen-3.5-4b` | `Qwen/Qwen3.5-4B:featherless-ai` |
+| `gemma-3-12b-it` | `google/gemma-3-12b-it:featherless-ai` |
+| `phi-4-mini-instruct` | `microsoft/Phi-4-mini-instruct:featherless-ai` |
 
 Tất cả dùng provider profile `huggingface_router` và biến môi trường `HF_TOKEN`.
+Nguồn benchmark và cách tạo capability prior được ghi tại
+`docs/s0_backbone_prior_profiles.md`.
 
 ### 4.3. Router không nhìn thấy model identity
 

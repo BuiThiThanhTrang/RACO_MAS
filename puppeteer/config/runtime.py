@@ -136,13 +136,61 @@ def load_experiment_config(
     if reset_scope not in {"episode", "teammate_sequence", "run"}:
         raise ValueError("profiles.reset_scope must be episode, teammate_sequence, or run")
 
-    routing = (raw.get("policy") or {}).get("routing", {})
-    if routing.get("mode", "legacy_threshold") not in {"legacy_threshold", "categorical_set_v2"}:
+    policy_raw = raw.get("policy") or {}
+    routing = policy_raw.get("routing", {})
+    routing_mode = routing.get("mode", "legacy_threshold")
+    if routing_mode not in {
+        "legacy_threshold",
+        "categorical_set_v2",
+        "baseline_threshold_v1",
+    }:
         raise ValueError("Unknown policy.routing.mode")
+    reward = policy_raw.get("reward", {}) or {}
+    reward_mode = str(reward.get("mode", "role_aware_v1"))
+    if reward_mode not in {"role_aware_v1", "baseline_compatible_v1"}:
+        raise ValueError("Unknown policy.reward.mode")
+    if (
+        reward_mode == "baseline_compatible_v1"
+        and routing_mode != "baseline_threshold_v1"
+    ):
+        raise ValueError(
+            "baseline_compatible_v1 requires policy.routing.mode=baseline_threshold_v1"
+        )
+    if (
+        routing_mode == "baseline_threshold_v1"
+        and reward_mode != "baseline_compatible_v1"
+    ):
+        raise ValueError(
+            "baseline_threshold_v1 requires policy.reward.mode=baseline_compatible_v1"
+        )
+    if routing_mode == "baseline_threshold_v1":
+        if float(routing.get("baseline_threshold_numerator", 2.0)) <= 0:
+            raise ValueError("routing.baseline_threshold_numerator must be positive")
     if int(routing.get("selection_count", 1)) < 1:
         raise ValueError("routing.selection_count must be positive")
-    if float(routing.get("threshold_multiplier", 1.5)) < 0:
+    threshold_multiplier = float(routing.get("threshold_multiplier", 1.5))
+    if threshold_multiplier < 0:
+        pass
         raise ValueError("routing.threshold_multiplier must be nonnegative")
+    training = policy_raw.get("training", {})
+    threshold_margin_coef = float(training.get("threshold_margin_coef", 0.0))
+    threshold_margin_cap = float(training.get("threshold_margin_cap", 0.25))
+    if threshold_margin_coef < 0:
+        raise ValueError("training.threshold_margin_coef must be nonnegative")
+    if threshold_margin_cap <= 0:
+        raise ValueError("training.threshold_margin_cap must be positive")
+    if threshold_margin_coef > 0 and routing_mode != "legacy_threshold":
+        raise ValueError(
+            "training.threshold_margin_coef requires policy.routing.mode=legacy_threshold"
+        )
+    if reward_mode == "baseline_compatible_v1" and threshold_margin_coef != 0:
+        raise ValueError(
+            "baseline_compatible_v1 requires training.threshold_margin_coef=0"
+        )
+    if threshold_margin_coef > 0 and threshold_multiplier <= 0:
+        raise ValueError(
+            "routing.threshold_multiplier must be positive when threshold-margin training is enabled"
+        )
     aggregation = (raw.get("global_config") or {}).get("aggregation", {})
     if aggregation.get("mode", "legacy") not in {"legacy", "majority", "majority_verifier"}:
         raise ValueError("Unknown aggregation.mode")

@@ -129,6 +129,32 @@ class RunLifecycleTests(unittest.TestCase):
             _resolve_policy_config(
                 experiment, "gsm-hard", "probe", "evolved", None, 42
             )
+
+    @patch("tasks.runner.RoleAwareREINFORCE", DummyRunnerPolicy)
+    def test_fresh_train_accepts_explicit_prior_profiles(self):
+        experiment = load_experiment_config(EXPERIMENT)
+        runtime_config = {
+            "graph": {"max_width": 3, "max_depth": 4},
+            "chat_context": {},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            runner = BenchmarkRunner(
+                S0,
+                runtime_config,
+                policy_config=self._runner_policy_config("train", "train"),
+                tool_policy=experiment.tools,
+                profile_config=experiment.profiles,
+                checkpoint_config=experiment.checkpoint,
+                run_dir=Path(directory) / "train-priors",
+                dataset_name="gsm-hard",
+                dataset_mode="train",
+                seed=42,
+                profile_source="priors",
+            )
+
+            self.assertEqual(runner.profile_source, "priors")
+            self.assertTrue(runner.profile_updates_enabled)
+            self.assertFalse(runner.resume_training)
         with self.assertRaisesRegex(ValueError, "cannot load a checkpoint"):
             _resolve_policy_config(
                 experiment,
@@ -205,6 +231,7 @@ class RunLifecycleTests(unittest.TestCase):
             }
         ]]
         policy.entropies = []
+        policy.decisions = []
         policy.gamma = 0.99
         policy.entropy_coef = 0.01
         policy.optimizer_updates_enabled = False
@@ -568,8 +595,10 @@ class RunLifecycleTests(unittest.TestCase):
             self.assertEqual(
                 len(backup.read_text(encoding="utf-8").splitlines()), 5
             )
-            with self.assertRaisesRegex(ValueError, "data_limit"):
-                runner.resolve_data_window(0, 41)
+            self.assertEqual(runner.resolve_data_window(0, 41), (20, 21))
+            self.assertEqual(runner.progress["requested_data_limit"], 41)
+            with self.assertRaisesRegex(ValueError, "match or increase"):
+                runner.resolve_data_window(0, 40)
 
     def test_evolved_evaluation_never_resumes_training_dataset_progress(self):
         runner = object.__new__(BenchmarkRunner)

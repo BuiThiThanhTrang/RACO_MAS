@@ -1,4 +1,4 @@
-run_id: mmlu_train_diag_entropy_0_s42
+run_id: mmlu_train_diag_k_2_neg_entropy_priors_s42
 mode: train
 seed: 42
 personas_path: personas/role_aware/s0_pool.jsonl
@@ -7,7 +7,7 @@ output_dir: runs
 dataset:
   name: MMLU-Pro
   mode: train
-  data_limit: 20
+  data_limit: 50
   data_start: 0
   split_seed: 42
   reference_items_per_teammate: 50
@@ -17,7 +17,7 @@ tools:
   allowed: [run_python]
 
 profiles:
-  alpha: 0.2
+  alpha: 0.0002
   reset_scope: run
   update_strategy: role_task_intersection
   evidence_level: path_terminal
@@ -26,9 +26,11 @@ profiles:
   update_global_reliability: true
   update_role_adherence_separately: true
   initialization:
-    source: probe
-    path: profiles/artifacts/mmlu-pro_s0_seed42_probe_profiles.json
-    required_for_train: true
+    # Start from the role/backbone priors embedded in the current S0 pool.
+    # Do not reuse a probe artifact whose pool fingerprint may be stale.
+    source: priors
+    path: null
+    required_for_train: false
 
 checkpoint:
   interval_items: 5
@@ -46,9 +48,9 @@ policy:
   training:
     loading: false
     training: true
-    learning_rate: 0.0001
-    gamma: 0.99
-    entropy_coef: 0.0
+    learning_rate: 0.00001
+    gamma: 0.8
+    entropy_coef: -0.005
     lambda_kl_loss: 0.0
   cost:
     scale: 0.1
@@ -57,14 +59,18 @@ policy:
   policy_mode: train
   routing:
     mode: legacy_threshold
-    selection_count: 1
-    threshold_multiplier: 1.5
+    selection_count: 2
+    threshold_multiplier: 1.05
     allow_policy_transfer: true
 
 global_config:
+  # MMLU-Pro terminal task reward. Step/token/Skywork terms remain separate.
+  task_reward:
+    correct: 1.0
+    incorrect: 0.0
   graph:
     max_width: 3
-    max_depth: 3
+    max_depth: 2
   audit:
     enabled: true
   aggregation:

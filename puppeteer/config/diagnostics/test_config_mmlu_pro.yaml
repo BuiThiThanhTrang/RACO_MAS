@@ -1,23 +1,23 @@
-run_id: mmlu_train_diag_entropy_0001_s42
+run_id: mmlu_train_legacy_threshold_baseline_pool_reward_only
 mode: train
 seed: 42
-personas_path: personas/role_aware/s0_pool.jsonl
+personas_path: personas\role_aware\puppeteer_model_card_role_aware_pool.jsonl
 output_dir: runs
 
 dataset:
   name: MMLU-Pro
   mode: train
-  data_limit: 20
+  data_limit: 120
   data_start: 0
   split_seed: 42
   reference_items_per_teammate: 50
-  probe_items_per_teammate:
+  probe_items_per_teammate: 10
 
 tools:
   allowed: [run_python]
 
 profiles:
-  alpha: 0.2
+  alpha: 0.0001
   reset_scope: run
   update_strategy: role_task_intersection
   evidence_level: path_terminal
@@ -26,9 +26,11 @@ profiles:
   update_global_reliability: true
   update_role_adherence_separately: true
   initialization:
-    source: probe
-    path: profiles/artifacts/mmlu-pro_s0_seed42_probe_profiles.json
-    required_for_train: true
+    # Start from the role/backbone priors embedded in the current Puppeteer pool.
+    # Do not reuse a probe artifact whose pool fingerprint may be stale.
+    source: priors
+    path: null
+    required_for_train: false
 
 checkpoint:
   interval_items: 5
@@ -46,22 +48,25 @@ policy:
   training:
     loading: false
     training: true
-    learning_rate: 0.0001
-    gamma: 0.99
-    entropy_coef: 0.001
+    learning_rate: 0.000005
+    gamma: 0.8
+    entropy_coef: -0.001
+    # Direct loss regularizer for selected agents above the legacy threshold.
+    threshold_margin_coef: 0.001
+    threshold_margin_cap: 0.25
     lambda_kl_loss: 0.0
-  cost:
-    scale: 0.1
-    growth_rate: 1.0
-    inverse: false
   policy_mode: train
   routing:
     mode: legacy_threshold
-    selection_count: 1
-    threshold_multiplier: 1.2
+    selection_count: 2
+    threshold_multiplier: 1.05
     allow_policy_transfer: true
 
 global_config:
+  # MMLU-Pro terminal task reward. Step/token/Skywork terms remain separate.
+  task_reward:
+    correct: 1.0
+    incorrect: 0.0
   graph:
     max_width: 3
     max_depth: 2

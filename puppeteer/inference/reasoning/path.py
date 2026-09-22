@@ -43,6 +43,8 @@ class GraphReasoningPath:
         self.next_agents = []
         self.env, self.env_name, self.policy = env, env_name, policy
         self.global_info = global_info
+        # The policy reconstructs baseline-like dialog input from this path only.
+        global_info.path_context = self.context
         global_info.logger = self.logger
         global_info.workpath = self.workspace_path
         global_info.path_id, global_info.path_uid = index, self.path_uid
@@ -114,6 +116,7 @@ class GraphReasoningPath:
         self.completed_steps += 1
         current_action.action_id = action_id
         self.global_info.update(current_action)
+        self.context.record_agent_turn(agent.hash)
         action_name = current_action.action.get("action")
         card = agent.role_card
         adhered = (action_name in card.allowed_actions and action_name not in card.forbidden_actions

@@ -83,6 +83,18 @@ class GraphReasoning:
         info.audit_split = self.runtime_config.get("audit_split", "unknown")
         return info
 
+    def _binary_task_reward(self, correct):
+        """Return the configured terminal reward for binary-answer tasks.
+
+        Defaults preserve existing experiments: correct=+1 and incorrect=-1.
+        The setting lives in runtime config so an experiment can use an
+        incorrect reward of 0 without changing historical runs.
+        """
+        reward_config = self.runtime_config.get("task_reward", {})
+        key = "correct" if correct else "incorrect"
+        default = 1.0 if correct else -1.0
+        return float(reward_config.get(key, default))
+
     def _route(self, path):
         capacity = self.max_parallel_paths - len(self.reasoning_paths) + (1 if path else 0)
         if capacity < 1:
@@ -323,9 +335,12 @@ class GraphReasoning:
             if self.task.get("type") in {"MMLU", "MMLU-Pro"} and aggregation_config.get("mode", "legacy") != "legacy":
                 aggregated_answer = normalize_choice(aggregated_answer, self.task.get("choices", "ABCDEFGHIJ")) or ""
             if self.task.get("type") == "MMLU-Pro":
+                correct = BenchmarkEvaluator.check_mmlu(
+                    aggregated_answer, self.task.get("Answer")
+                )
                 transition = {
                 'state': reasoning_path.global_info.workflow.state,
-                'reward': 1 if BenchmarkEvaluator.check_mmlu(aggregated_answer, self.task.get("Answer")) else -1,
+                'reward': self._binary_task_reward(correct),
                 'action': None,
                 'next_state': None,
                 'done': True,
@@ -336,9 +351,12 @@ class GraphReasoning:
                 transition["path_uid"] = reasoning_path.path_uid
                 self.policy.finalize_task(transition, reasoning_path.global_info)
             elif self.task.get("type") == "GSM-Hard":
+                correct = BenchmarkEvaluator.check_gsm8k(
+                    aggregated_answer, self.task.get("Answer")
+                )
                 transition = {
                 'state': reasoning_path.global_info.workflow.state,
-                'reward': 1 if BenchmarkEvaluator.check_gsm8k(aggregated_answer, self.task.get("Answer")) else -1,
+                'reward': self._binary_task_reward(correct),
                 'action': None,
                 'next_state': None,
                 'done': True,
