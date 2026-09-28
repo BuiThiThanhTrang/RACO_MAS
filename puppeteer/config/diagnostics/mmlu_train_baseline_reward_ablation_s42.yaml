@@ -1,4 +1,4 @@
-run_id: mmlu_train_baseline_reward_ablation_s42_4
+run_id: mmlu_train_baseline_reward_baseline_pool_1_25_09
 mode: train
 seed: 42
 personas_path: personas\role_aware\puppeteer_model_card_role_aware_pool.jsonl

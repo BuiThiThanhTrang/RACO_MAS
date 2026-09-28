@@ -1,25 +1,66 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 
+LEGACY_CAPABILITY_DIMENSIONS = (
+    "planning", "general_reasoning", "quantitative_reasoning", "domain_reasoning",
+    "software_engineering", "commonsense_generation", "verification", "repair",
+    "integration", "tool_use",
+)
+MMLU_DOMAIN_CAPABILITY_DIMENSIONS = (
+    "task_planning", "formal_quantitative", "natural_science",
+    "computing_engineering", "social_legal_business", "humanities_behavioral",
+    "general_reasoning", "evidence_verification", "answer_integration", "stop_decision",
+)
+ACTIVE_CAPABILITY_SCHEMA = os.environ.get("PUPPETEER_CAPABILITY_SCHEMA", "mmlu_domain_v1").strip().lower()
+if ACTIVE_CAPABILITY_SCHEMA not in {"legacy_v1", "mmlu_domain_v1"}:
+    raise ValueError("PUPPETEER_CAPABILITY_SCHEMA must be legacy_v1 or mmlu_domain_v1")
+CAPABILITY_SCHEMA_VERSION = ACTIVE_CAPABILITY_SCHEMA
 CAPABILITY_DIMENSIONS = (
-    "planning",
-    "general_reasoning",
-    "quantitative_reasoning",
-    "domain_reasoning",
-    "software_engineering",
-    "commonsense_generation",
-    "verification",
-    "repair",
-    "integration",
-    "tool_use",
+    LEGACY_CAPABILITY_DIMENSIONS
+    if ACTIVE_CAPABILITY_SCHEMA == "legacy_v1"
+    else MMLU_DOMAIN_CAPABILITY_DIMENSIONS
 )
 
+_LEGACY_CAPABILITY_ALIASES = {
+    "planning": "task_planning",
+    "general_reasoning": "general_reasoning",
+    "quantitative_reasoning": "formal_quantitative",
+    # A legacy generic domain score is not evidence for one named MMLU domain.
+    "domain_reasoning": "general_reasoning",
+    "software_engineering": "computing_engineering",
+    "commonsense_generation": "humanities_behavioral",
+    "verification": "evidence_verification",
+    "repair": "evidence_verification",
+    "integration": "answer_integration",
+}
+
+
+def migrate_capability_prior(values: Mapping[str, Any]) -> dict[str, float]:
+    """Load a persona card under the active capability schema.
+
+    Legacy persona cards are accepted in domain mode through a conservative
+    mapping. Trained profile artifacts are never converted because their learned
+    positions would carry incompatible semantics.
+    """
+    migrated: dict[str, float] = {}
+    for raw_name, raw_value in values.items():
+        name = str(raw_name)
+        if ACTIVE_CAPABILITY_SCHEMA == "legacy_v1":
+            target = name if name in CAPABILITY_DIMENSIONS else None
+        else:
+            target = name if name in CAPABILITY_DIMENSIONS else _LEGACY_CAPABILITY_ALIASES.get(name)
+        if target is None:
+            continue
+        value = _bounded(raw_value, f"capability_prior[{name!r}]")
+        migrated[target] = max(migrated.get(target, 0.0), value)
+    return migrated
 
 def _as_tuple(value: Any) -> tuple[str, ...]:
     if value is None:
@@ -98,6 +139,7 @@ class RoleCard:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "RoleCard":
+        prior = migrate_capability_prior(data.get("capability_prior") or {})
         return cls(
             schema_version=str(data.get("schema_version", SCHEMA_VERSION)),
             role_name=str(data["role_name"]),
@@ -108,10 +150,7 @@ class RoleCard:
             expected_input=IOSchema.from_dict(data.get("expected_input")),
             expected_output=IOSchema.from_dict(data.get("expected_output")),
             tools=_as_tuple(data.get("tools")),
-            capability_prior={
-                str(name): _bounded(value, f"capability_prior[{name!r}]")
-                for name, value in (data.get("capability_prior") or {}).items()
-            },
+            capability_prior=prior,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -256,9 +295,15 @@ class CapabilityProfile:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "CapabilityProfile":
+        names = tuple(data["capability_names"])
+        if names != CAPABILITY_DIMENSIONS:
+            raise ValueError(
+                f"Incompatible capability profile schema for {CAPABILITY_SCHEMA_VERSION}. "
+                "Regenerate probe/reference profiles under the active schema."
+            )
         return cls(
-            schema_version=str(data.get("schema_version", SCHEMA_VERSION)),
-            capability_names=tuple(data["capability_names"]),
+            schema_version=str(data.get("schema_version", CAPABILITY_SCHEMA_VERSION)),
+            capability_names=names,
             mean=list(data["mean"]),
             uncertainty=list(data["uncertainty"]),
             observation_count=list(data["observation_count"]),
@@ -274,7 +319,9 @@ class CapabilityProfile:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        value = asdict(self)
+        value["schema_version"] = CAPABILITY_SCHEMA_VERSION
+        return value
 
     def update_capability(self, capability: str, reward: float, alpha: float) -> None:
         if capability not in self.capability_names:

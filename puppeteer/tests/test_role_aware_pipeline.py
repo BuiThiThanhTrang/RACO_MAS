@@ -141,7 +141,7 @@ class RoleAwarePipelineTests(unittest.TestCase):
         second = apply([(1, 0.0), (0, 1.0)])
         self.assertEqual(first.to_dict(), second.to_dict())
         self.assertEqual(first.global_reliability_count, 2)
-        relevant = {"planning", "general_reasoning", "integration"}
+        relevant = {"task_planning", "general_reasoning", "answer_integration"}
         for name, count in zip(first.capability_names, first.observation_count):
             self.assertEqual(count, 2 if name in relevant else 0)
 
@@ -156,7 +156,7 @@ class RoleAwarePipelineTests(unittest.TestCase):
     def test_split_manifests_are_disjoint_and_have_locked_sizes(self):
         expected = {
             "gsm_hard": {"train": 200, "dev": 100, "reference": 100, "probe": 10, "final": 909},
-            "mmlu_pro": {"train": 200, "dev": 140, "reference": 280, "probe": 10, "final": 2000},
+            "mmlu_pro": {"train": 400, "dev": 140, "reference": 280, "probe": 10, "final": 2000},
             "srdd": {"train": 200, "dev": 100, "reference": 100, "probe": 10, "final": 790},
             "cw": {"train": 80, "dev": 20, "reference": 40, "probe": 10, "final": 50},
         }
