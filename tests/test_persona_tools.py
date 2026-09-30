@@ -30,6 +30,41 @@ def isolated_class(relative_path, name, namespace):
 
 
 class PersonaToolTests(unittest.TestCase):
+    def test_mmlu_runtime_pool_is_flat_and_tool_free(self):
+        pool_path = ROOT / "puppeteer/personas/mmlu_pro_domain_specialist_runtime_pool.jsonl"
+        personas = [
+            json.loads(line)
+            for line in pool_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+        self.assertEqual(len(personas), 8)
+        self.assertEqual(
+            {persona["model_type"] for persona in personas},
+            {"qwen-3.5-9b", "gemma-3-12b-it", "llama-3.1-8b", "mistral-nemo-12b"},
+        )
+        self.assertEqual(
+            sum("terminate" in persona["actions"] for persona in personas),
+            1,
+        )
+        self.assertTrue(
+            all(
+                set(persona["actions"]).isdisjoint(
+                    {"read_file", "search_arxiv", "search_bing", "access_website", "run_python"}
+                )
+                for persona in personas
+            )
+        )
+        self.assertTrue(
+            all(
+                not ({"role_card", "profile", "provider_profile", "metadata"} & persona.keys())
+                for persona in personas
+            )
+        )
+        self.assertTrue(
+            all("Responsible for" in persona["role_prompt"] for persona in personas)
+        )
+
     def test_actual_pool_recognized_by_actions(self):
         cls = isolated_class("puppeteer/inference/graph/agent_graph.py", "AgentGraph", {})
         graph = cls.__new__(cls)

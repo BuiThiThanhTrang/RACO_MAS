@@ -40,6 +40,12 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
     "qwen-2.5-14b": ModelConfig(
         "qwen-2.5-14b", "query_qwen2_5_14b", "Qwen/Qwen2.5-14B-Instruct:featherless-ai",
         "huggingface", 4096, 14),
+    "qwen-3.5-9b": ModelConfig(
+        "qwen-3.5-9b", "query_qwen3_5_9b", "Qwen/Qwen3.5-9B",
+        "huggingface", 4096, 9),
+    "gemma-3-12b-it": ModelConfig(
+        "gemma-3-12b-it", "query_gemma3_12b_it", "google/gemma-3-12b-it",
+        "huggingface", 4096, 12),
     "llama-3.1-8b": ModelConfig(
         "llama-3.1-8b", "query_llama3_1_8b", "meta-llama/Llama-3.1-8B-Instruct:featherless-ai",
         "huggingface", 4096, 8),

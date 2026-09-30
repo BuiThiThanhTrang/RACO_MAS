@@ -47,6 +47,12 @@ agent_models:
   qwen-2.5-14b:
     provider: huggingface
     api_model_name: Qwen/Qwen2.5-14B-Instruct:featherless-ai
+  qwen-3.5-9b:
+    provider: huggingface
+    api_model_name: Qwen/Qwen3.5-9B
+  gemma-3-12b-it:
+    provider: huggingface
+    api_model_name: google/gemma-3-12b-it
   llama-3.1-8b:
     provider: huggingface
     api_model_name: meta-llama/Llama-3.1-8B-Instruct:featherless-ai
