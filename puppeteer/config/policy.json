@@ -7,7 +7,7 @@
         "model_path": "D:\\SideProject\\chatdev_original\\ChatDev\\puppeteer\\checkpoint\\MMLU-Pro_train\\policy_net_20260915_105454.pt"
     },
     "training": {
-        "loading": true,
+        "loading": false,
         "training": true,
         "learning_rate": 0.0001,
         "sample_size": 1,
