@@ -210,3 +210,5 @@ puppeteer/logs/
 puppeteer/results/
 reports/
 tmp/
+
+.venv311/
