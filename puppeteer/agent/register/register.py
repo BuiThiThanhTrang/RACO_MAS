@@ -1,6 +1,6 @@
 from typing import Any
 from agent.reasoning_agent import Reasoning_Agent
-from utils.file_utils import iter_jsonl
+from utils.persona_adapter import load_runtime_personas
 
 class AgentRegister:
     def __init__(self):
@@ -52,7 +52,10 @@ class AgentRegister:
         return agent
 
     def register_all_agents(self, personas_path):
-        self._agent_personas = list(iter_jsonl(personas_path))
+        # A new runner may use a different pool in the same Python process.
+        self.agents = {}
+        self.unique_agents = {}
+        self._agent_personas = load_runtime_personas(personas_path)
         self._total_agent_num = len(self._agent_personas)
         for index in range(self._total_agent_num):
             self._initialize_agent(index)
@@ -67,13 +70,17 @@ class AgentRegister:
         agent_model_type = self._agent_personas[index].get("model_type", None)
         agent_actions = self._agent_personas[index].get("actions", None)
         agent_policy = self._agent_personas[index].get("policy", None)
-        if self._agent_personas[index].get("agent_type") == "reasoning":
-            agent = Reasoning_Agent(role=agent_role_name, 
-                          role_prompt=agent_role_prompt, 
-                          index=index,
-                          model=agent_model_type,
-                          actions=agent_actions,
-                          policy=agent_policy)
+        if self._agent_personas[index].get("agent_type") != "reasoning":
+            raise ValueError(
+                f"Unsupported agent_type for persona {agent_role_name!r}: "
+                f"{self._agent_personas[index].get('agent_type')!r}"
+            )
+        agent = Reasoning_Agent(role=agent_role_name,
+                      role_prompt=agent_role_prompt,
+                      index=index,
+                      model=agent_model_type,
+                      actions=agent_actions,
+                      policy=agent_policy)
         self._register_agent(agent_role_name, agent)
 
     def __getattribute__(self, name: str) -> Any:

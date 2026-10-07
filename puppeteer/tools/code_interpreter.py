@@ -113,9 +113,6 @@ class PythonInterpreter(CodeInterpreter):
 
             # Handle return code and output
             if return_code == 0:
-                # Clean up file paths in the output for readability
-                work_path = os.getcwd()
-                output = output.replace(work_path, "")
                 return True, output
             else:
                 # Handle errors in the output

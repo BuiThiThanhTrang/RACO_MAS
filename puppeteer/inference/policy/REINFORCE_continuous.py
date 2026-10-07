@@ -54,6 +54,7 @@ class ContinuousREINFORCE(LearningPolicy):
         self.model_path = self.config["paths"]["model_path"]
         self.training = self.config["training"]["training"]
         self.loading = self.config["training"]["loading"]
+        self.loaded_checkpoint_metadata = {}
         self.learning_rate = self.config["training"]["learning_rate"]
         self.gamma = self.config["training"]["gamma"]
         self.sample_size = self.config["training"]["sample_size"]
@@ -168,6 +169,47 @@ class ContinuousREINFORCE(LearningPolicy):
             
         except Exception as e:
             print(f"Error saving model: {str(e)}")
+            return None
+
+    def save_resume_checkpoint(self, completed_rows, result_last_id=None):
+        """Atomically replace the checkpoint for the latest completed result row."""
+        path = self.config["paths"]["checkpoint_path"]
+        os.makedirs(path, exist_ok=True)
+
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        save_path = os.path.join(path, "resume_latest.pt")
+        temporary_path = save_path + ".tmp"
+        checkpoint = {
+            'model_state_dict': self.policy_network.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict() if hasattr(self, 'optimizer') else None,
+            'input_dim': self.policy_network.input_dim,
+            'output_dim': self.policy_network.output_dim,
+            'timestamp': timestamp,
+            'config': self.config,
+            'metadata': {
+                'tag': f'completed_{completed_rows}',
+                'version': '1.1',
+                'kind': 'resume',
+                'completed_rows': completed_rows,
+                'result_last_id': result_last_id,
+            },
+        }
+
+        try:
+            torch.save(checkpoint, temporary_path)
+            os.replace(temporary_path, save_path)
+            print(
+                "Resume checkpoint saved after "
+                f"{completed_rows} completed row(s): {save_path}"
+            )
+            return save_path
+        except Exception as error:
+            if os.path.exists(temporary_path):
+                try:
+                    os.remove(temporary_path)
+                except OSError:
+                    pass
+            print(f"Error saving resume checkpoint: {error}")
             return None
 
     def update_executed_trajectories(self):
@@ -559,6 +601,8 @@ class ContinuousREINFORCE(LearningPolicy):
                 # Merge loaded config with current config, prioritizing current config
                 self.config.update({k: v for k, v in checkpoint['config'].items() 
                                   if k not in self.config})
+
+            self.loaded_checkpoint_metadata = checkpoint.get('metadata') or {}
             
             logger.info(f"Model loaded successfully from {path}")
             logger.info(f"Model timestamp: {checkpoint['timestamp']}")

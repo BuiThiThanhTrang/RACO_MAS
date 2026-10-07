@@ -8,11 +8,9 @@
         "Finish your answer with the following template: FINAL ANSWER: [YOUR FINAL ANSWER]"
     ],
     "MMLU_answer": [
-        "Choose the most common one and then format it.",
-        "Format it using the fewest words possible, it should be a single letter, but do not alter the original answer.",
-        "Do not include any other units or punctuation. ",
-        "And finish your answer with the following template: FINAL ANSWER: [YOUR FINAL ANSWER]",
-        "Return your answer with only the single letter."
+        "Using the question and prior reasoning, select exactly one answer option from A through J.",
+        "If the prior calculation does not match an option, re-check its arithmetic once.",
+        "Return only the uppercase option letter with no explanation or punctuation."
     ],
     "gsm_answer": [
         "Calculate carefully and provide only the final numerical answer.",

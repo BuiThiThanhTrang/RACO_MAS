@@ -112,9 +112,88 @@ class DatasetSplitTests(unittest.TestCase):
         result = self.data / "result.jsonl"
         result.write_text(json.dumps({"id": 5}) + "\n")
         mmlu_pro.validate_resume(result, "train", 1, 42)
+        mmlu_pro.validate_resume(
+            result,
+            "train",
+            1,
+            42,
+            checkpoint_completed_rows=1,
+            checkpoint_last_result_id=5,
+        )
+        with self.assertRaises(ValueError):
+            mmlu_pro.validate_resume(
+                result,
+                "train",
+                1,
+                42,
+                checkpoint_completed_rows=2,
+            )
+        with self.assertRaises(ValueError):
+            mmlu_pro.validate_resume(
+                result,
+                "train",
+                1,
+                42,
+                checkpoint_completed_rows=1,
+                checkpoint_last_result_id=999,
+            )
         result.write_text(json.dumps({"id": 0}) + "\n")
         with self.assertRaises(ValueError):
             mmlu_pro.validate_resume(result, "train", 1, 42)
+
+    def test_mmlu_saves_resume_checkpoint_after_each_completed_row(self):
+        frame = pd.DataFrame([
+            {
+                "question_id": 5,
+                "question": "question 5",
+                "options": ["a", "b"],
+                "answer": "A",
+                "category": "math",
+            },
+            {
+                "question_id": 1,
+                "question": "question 1",
+                "options": ["a", "b"],
+                "answer": "A",
+                "category": "math",
+            },
+        ])
+
+        class Runner:
+            def __init__(self):
+                self.saved = []
+
+            def run_reasoning(self, task):
+                return "A"
+
+            def save_resume_checkpoint(self, completed_rows, result_last_id):
+                self.saved.append((completed_rows, result_last_id))
+
+        runner = Runner()
+        evaluator = SimpleNamespace(check_mmlu=lambda prediction, answer: prediction == answer)
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            mmlu_pro,
+            "load_dataset",
+            return_value=frame,
+        ), contextlib.redirect_stderr(io.StringIO()):
+            mmlu_pro.run(
+                runner,
+                evaluator,
+                folder,
+                "train",
+                data_limit=2,
+                seed=42,
+                checkpoint_every=1,
+            )
+            records = [
+                json.loads(line)
+                for line in (Path(folder) / "MMLU-Pro_train.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+
+        self.assertEqual([record["id"] for record in records], [5, 1])
+        self.assertEqual(runner.saved, [(1, 5), (2, 1)])
 
 
 def production_functions(path, names, namespace, class_name=None):

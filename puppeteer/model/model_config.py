@@ -12,6 +12,7 @@ class ModelConfig:
     url: Optional[str] = None      
     temperature: float = 0.1       
     description: str = ""          
+    extra_body: Optional[Dict[str, Any]] = None
 
 
 MODEL_REGISTRY: Dict[str, ModelConfig] = {
@@ -42,7 +43,8 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         "huggingface", 4096, 14),
     "qwen-3.5-9b": ModelConfig(
         "qwen-3.5-9b", "query_qwen3_5_9b", "Qwen/Qwen3.5-9B",
-        "huggingface", 4096, 9),
+        "huggingface", 4096, 9,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}}),
     "gemma-3-12b-it": ModelConfig(
         "gemma-3-12b-it", "query_gemma3_12b_it", "google/gemma-3-12b-it",
         "huggingface", 4096, 12),

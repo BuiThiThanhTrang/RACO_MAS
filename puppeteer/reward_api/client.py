@@ -2,7 +2,7 @@
 import math
 import os
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
@@ -12,6 +12,32 @@ class RewardAPIError(RuntimeError):
 
 
 _TRUNCATION_MARKER = "\n...[truncated for reward model context]...\n"
+_MAX_MODAL_RESULT_REDIRECTS = 20
+
+
+def _same_origin_redirect(original_url, current_url, location):
+    """Resolve a Modal result redirect without exposing credentials cross-origin."""
+    if not isinstance(location, str) or not location:
+        raise RewardAPIError("Reward API returned HTTP 303 without a Location header")
+
+    target_url = urljoin(current_url, location)
+    original = urlsplit(original_url)
+    target = urlsplit(target_url)
+
+    def origin(parsed):
+        default_port = 443 if parsed.scheme == "https" else None
+        return parsed.scheme, parsed.hostname, parsed.port or default_port
+
+    if (
+        origin(target) != origin(original)
+        or target.username
+        or target.password
+        or target.fragment
+    ):
+        raise RewardAPIError(
+            "Reward API refused an unsafe cross-origin HTTP 303 redirect"
+        )
+    return target_url
 
 
 def _truncate_middle(content, max_chars):
@@ -143,18 +169,52 @@ class RewardClient:
         self.session = session or requests.Session()
         self.sleep = sleep
 
+    def _post_and_follow_modal_result(self, payload):
+        response = None
+        current_url = self.url
+        try:
+            response = self.session.post(
+                current_url,
+                headers=self.headers,
+                json=payload,
+                timeout=self.timeout,
+                allow_redirects=False,
+            )
+            redirects = 0
+            while response.status_code == 303:
+                if redirects >= _MAX_MODAL_RESULT_REDIRECTS:
+                    raise RewardAPIError(
+                        "Reward API exceeded the Modal result redirect limit"
+                    )
+                next_url = _same_origin_redirect(
+                    self.url,
+                    current_url,
+                    response.headers.get("Location"),
+                )
+                response.close()
+                response = None
+                current_url = next_url
+                redirects += 1
+                response = self.session.get(
+                    current_url,
+                    headers=self.headers,
+                    timeout=self.timeout,
+                    allow_redirects=False,
+                )
+            return response
+        except Exception:
+            if response is not None:
+                response.close()
+            raise
+
     def score(self, messages):
         outbound = compact_messages(messages, self.max_input_chars)
         sent_chars = sum(len(message.get("content", "")) for message in outbound)
 
         for attempt in range(self.attempts):
             try:
-                response = self.session.post(
-                    self.url,
-                    headers=self.headers,
-                    json={"schema_version": 1, "messages": outbound},
-                    timeout=self.timeout,
-                    allow_redirects=False,
+                response = self._post_and_follow_modal_result(
+                    {"schema_version": 1, "messages": outbound}
                 )
             except (requests.ConnectionError, requests.Timeout):
                 failure = "Reward API connection failed or timed out"

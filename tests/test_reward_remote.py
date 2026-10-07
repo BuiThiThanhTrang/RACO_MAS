@@ -28,6 +28,7 @@ def response_data():
 def http_response(status=200, data=None):
     result = Mock(status_code=status)
     result.json.return_value = response_data() if data is None else data
+    result.headers = {}
     return result
 
 
@@ -60,13 +61,45 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(self.sleep.call_count, 2)
 
     def test_permanent_status_never_retried(self):
-        for status in (301, 400, 401, 403, 404, 422):
+        for status in (301, 302, 307, 308, 400, 401, 403, 404, 422):
             with self.subTest(status=status):
                 self.session.reset_mock()
                 self.session.post.return_value = http_response(status)
                 with self.assertRaises(RewardAPIError):
                     self.client.score([])
                 self.assertEqual(self.session.post.call_count, 1)
+
+    def test_modal_long_request_redirect_is_followed_on_same_origin(self):
+        redirect = http_response(303)
+        redirect.headers = {
+            "Location": "https://example.modal.run?modal-result-id=request-123"
+        }
+        final = http_response()
+        self.session.post.return_value = redirect
+        self.session.get.return_value = final
+
+        state, reward = self.client.score([])
+
+        self.assertEqual((len(state), reward), (8192, -3.0))
+        self.session.get.assert_called_once_with(
+            "https://example.modal.run?modal-result-id=request-123",
+            headers=self.client.headers,
+            timeout=(10.0, 180.0),
+            allow_redirects=False,
+        )
+        redirect.close.assert_called_once()
+        final.close.assert_called_once()
+
+    def test_cross_origin_modal_redirect_is_rejected(self):
+        redirect = http_response(303)
+        redirect.headers = {"Location": "https://attacker.example/result"}
+        self.session.post.return_value = redirect
+
+        with self.assertRaisesRegex(RewardAPIError, "unsafe cross-origin"):
+            self.client.score([])
+
+        self.session.get.assert_not_called()
+        redirect.close.assert_called_once()
 
     def test_retry_exhaustion_redacts_transport_error(self):
         self.session.post.side_effect = requests.ConnectionError("test-secret")

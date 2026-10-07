@@ -58,7 +58,14 @@ def _result_ids(result_path):
     return ids
 
 
-def validate_resume(result_path, mode, data_start, seed):
+def validate_resume(
+    result_path,
+    mode,
+    data_start,
+    seed,
+    checkpoint_completed_rows=None,
+    checkpoint_last_result_id=None,
+):
     existing_ids = _result_ids(result_path)
     if len(existing_ids) != data_start:
         raise ValueError(
@@ -75,6 +82,24 @@ def validate_resume(result_path, mode, data_start, seed):
             "Resume mismatch: result IDs are not the expected prefix "
             f"of the {mode} split for seed {seed}"
         )
+    if (
+        checkpoint_completed_rows is not None
+        and checkpoint_completed_rows != data_start
+    ):
+        raise ValueError(
+            "Resume mismatch: checkpoint metadata reports "
+            f"{checkpoint_completed_rows} completed rows, but --data_start is "
+            f"{data_start}"
+        )
+    if (
+        checkpoint_last_result_id is not None
+        and existing_ids[-1] != checkpoint_last_result_id
+    ):
+        raise ValueError(
+            "Resume mismatch: checkpoint metadata reports last result ID "
+            f"{checkpoint_last_result_id!r}, but the result file ends with "
+            f"{existing_ids[-1]!r}"
+        )
 
 
 def run(
@@ -85,10 +110,20 @@ def run(
     data_limit=None,
     seed=42,
     data_start=0,
+    checkpoint_every=1,
+    checkpoint_completed_rows=None,
+    checkpoint_last_result_id=None,
 ):
     result_path = os.path.join(results_dir, f"MMLU-Pro_{mode}.jsonl")
     if data_start:
-        validate_resume(result_path, mode, data_start, seed)
+        validate_resume(
+            result_path,
+            mode,
+            data_start,
+            seed,
+            checkpoint_completed_rows=checkpoint_completed_rows,
+            checkpoint_last_result_id=checkpoint_last_result_id,
+        )
 
     dataset = load_dataset(
         mode, data_limit, seed=seed, data_start=data_start
@@ -97,7 +132,7 @@ def run(
     acc = 0
 
     with open(result_path, file_mode, encoding="utf-8") as fd:
-        for _, row in tqdm(dataset.iterrows(), total=len(dataset)):
+        for row_offset, (_, row) in enumerate(dataset.iterrows(), start=1):
             task = format_question(row)
             final_ans = runner.run_reasoning(task)
             flag = evaluator.check_mmlu(final_ans, task["Answer"])
@@ -110,3 +145,14 @@ def run(
             }
             fd.write(json.dumps(record, ensure_ascii=False) + "\n")
             fd.flush()
+            os.fsync(fd.fileno())
+
+            completed_rows = data_start + row_offset
+            if (
+                completed_rows % checkpoint_every == 0
+                or row_offset == len(dataset)
+            ):
+                runner.save_resume_checkpoint(
+                    completed_rows=completed_rows,
+                    result_last_id=task["id"],
+                )

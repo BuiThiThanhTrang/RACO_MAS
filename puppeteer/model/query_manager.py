@@ -17,16 +17,21 @@ class ModelQueryManager:
             self.clients[config.name] = self.config_manager.create_client(config.provider, config.url)
         return self.clients[config.name]
 
-    def query(self, model_key: str, messages: List[Dict[str, str]], 
-              system_prompt: Optional[str] = None) -> Tuple[str, int]:
+    def query(self, model_key: str, messages: List[Dict[str, str]],
+              system_prompt: Optional[str] = None,
+              max_tokens: Optional[int] = None) -> Tuple[str, int]:
         config = self.registry.get_model_config(model_key)
         if not config:
             available_models = ", ".join(self.registry.list_available_models())
             raise ValueError(f"Unknown model: {model_key}. Available models: {available_models}")
         
-        return self._query_with_config(messages, config, system_prompt)
+        return self._query_with_config(
+            messages, config, system_prompt, max_tokens=max_tokens
+        )
     
-    def _query_with_config(self, messages, config: ModelConfig,  system_prompt=None):
+    def _query_with_config(
+        self, messages, config: ModelConfig, system_prompt=None, max_tokens=None
+    ):
         model_config_dict = {
             "temperature": config.temperature,
             "top_p": 1.0,
@@ -35,8 +40,10 @@ class ModelQueryManager:
             "frequency_penalty": 0.0,
             "presence_penalty": 0.0,
             "logit_bias": {},
-            "max_tokens": config.max_tokens
+            "max_tokens": max_tokens or config.max_tokens
         }
+        if config.extra_body:
+            model_config_dict["extra_body"] = config.extra_body
 
         if not isinstance(messages, list):
             system_prompt = "You are an assistant" if system_prompt is None else system_prompt
@@ -54,7 +61,12 @@ class ModelQueryManager:
         if isinstance(response, str):
             return response, 1
         
-        response_message = response.choices[0].message.content
+        message = response.choices[0].message
+        response_message = message.content
+        if not response_message:
+            # Some reasoning providers expose thought tokens separately and may
+            # exhaust the completion budget before producing normal content.
+            response_message = getattr(message, "reasoning_content", None) or ""
         return response_message, total_tokens
     
     

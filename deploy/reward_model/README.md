@@ -169,10 +169,11 @@ python -m deploy.reward_model.smoke_test
 ```
 
 Proxy Token khác token SDK dùng để deploy. Không commit token vào repository.
-Endpoint sử dụng `requires_proxy_auth=True`. HTTP client không theo redirect để
-tránh chuyển headers xác thực sang một URL khác.
+Endpoint sử dụng `requires_proxy_auth=True`. Khi request vượt giới hạn HTTP 150 giây,
+Modal trả 303 tới URL kết quả. Client chỉ theo 303 cùng origin; redirect sang host
+khác bị từ chối để không chuyển Proxy Token ra ngoài endpoint.
 
-Server giới hạn 1 container, xử lý tuần tự; tự scale về 0 sau khoảng 300 giây idle.
+Server giới hạn 1 container, xử lý tuần tự; tự scale về 0 sau khoảng 60 giây idle.
 Request đầu có cold start. Timeout đọc mặc định là 180 giây, có thể tăng khi đo
 cold start thực tế. Read timeout/retry có thể tạo lại công việc inference trên
 server; không tự retry vô hạn.

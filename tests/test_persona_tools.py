@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+import importlib.util
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -16,6 +17,13 @@ import arxiv
 import requests
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_module(relative_path, name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def isolated_class(relative_path, name, namespace):
@@ -30,6 +38,25 @@ def isolated_class(relative_path, name, namespace):
 
 
 class PersonaToolTests(unittest.TestCase):
+    def test_schema_pool_is_adapted_and_gets_one_terminator(self):
+        adapter = load_module(
+            "puppeteer/utils/persona_adapter.py", "persona_adapter_under_test"
+        )
+        pool_path = ROOT / "puppeteer/personas/mmlu_pro_heterogeneous_pool.jsonl"
+        personas = adapter.load_runtime_personas(pool_path)
+
+        self.assertEqual(len(personas), 8)
+        self.assertEqual(
+            {persona["model_type"] for persona in personas},
+            {"qwen-3.5-9b", "gemma-3-12b-it", "llama-3.1-8b", "mistral-nemo-12b"},
+        )
+        self.assertEqual(
+            sum("terminate" in persona["actions"] for persona in personas), 1
+        )
+        self.assertTrue(all(persona["name"] for persona in personas))
+        self.assertTrue(all(persona["role_prompt"] for persona in personas))
+        self.assertTrue(all(persona["agent_type"] == "reasoning" for persona in personas))
+
     def test_mmlu_runtime_pool_is_flat_and_tool_free(self):
         pool_path = ROOT / "puppeteer/personas/mmlu_pro_domain_specialist_runtime_pool.jsonl"
         personas = [

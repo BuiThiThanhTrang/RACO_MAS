@@ -59,7 +59,7 @@ def chat_completion_request(messages, model, new_client, model_config_dict: Dict
     json_data = {
         "model": model,
         "messages": messages,
-        "max_tokens": 4096,
+        "max_tokens": model_config_dict.get("max_tokens", 4096),
         "temperature": model_config_dict["temperature"],
         "top_p": model_config_dict["top_p"],
         "n": model_config_dict["n"],
@@ -68,6 +68,8 @@ def chat_completion_request(messages, model, new_client, model_config_dict: Dict
         "presence_penalty": model_config_dict["presence_penalty"],
         "logit_bias": model_config_dict["logit_bias"],
     }
+    if model_config_dict.get("extra_body"):
+        json_data["extra_body"] = model_config_dict["extra_body"]
 
     try:
         model_log_and_print("[Model Query] {}".format(messages))

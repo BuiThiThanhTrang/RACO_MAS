@@ -134,13 +134,22 @@ class GraphReasoning:
         return self.answers
 
     def aggregate_answers(self, global_info, answers:list, query_func=None) -> str:
+        if len(answers) == 0:
+            main_logger.warning(
+                "[Aggregation] No formatted answer candidates were produced"
+            )
+            return ""
+        if (
+            len(answers) == 1
+            and self.task.get("type") in {"MMLU", "MMLU-Pro"}
+        ):
+            main_logger.info("[Aggregation] Single candidate: {}".format(answers[0]))
+            return answers[0]
+
         # only choose the last result without any format or extract
         if query_func is None:
-            if len(answers) == 0:
-                return None
-            else:
-                main_logger.info("[Aggregation] {}".format(answers[-1]))
-                return answers[-1] 
+            main_logger.info("[Aggregation] {}".format(answers[-1]))
+            return answers[-1]
         
         # only choose the last result without any format or extract
         if self.task.get("type") == "SRDD" or self.task.get("type") == "CW":
@@ -162,14 +171,21 @@ class GraphReasoning:
         
         main_logger.info("[Aggregating] {}".format(answer_prompt))
         
-        raw_response, _ = query_func(messages=answer_prompt)
+        aggregation_limit = (
+            256 if self.task.get("type") in {"MMLU", "MMLU-Pro"} else None
+        )
+        raw_response, _ = query_func(
+            messages=answer_prompt,
+            max_tokens=aggregation_limit,
+        )
         main_logger.info("[Aggregation Answer] {}".format(raw_response))
         
-        return raw_response if len(raw_response)!=0 else answers[-1]
+        return raw_response if raw_response else answers[-1]
 
     def majority_vote(self, answers: List) -> str:
         if self.task.get("type") == "MMLU" or self.task.get("type") == "MMLU-Pro":
             answers = [BenchmarkEvaluator.extract_choice_answer(answer) for answer in answers]
+            answers = [answer for answer in answers if str(answer).strip()]
             main_logger.info("[Majority Vote] Answers: {}".format(answers))
         elif self.task.get("type") == "gsm-hard" or self.task.get("type") == "GSM8K":
             answers = [BenchmarkEvaluator.extract_math_answer(answer) for answer in answers]

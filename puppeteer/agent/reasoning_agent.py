@@ -19,6 +19,32 @@ from utils.file_utils import format_code_with_prints, extract_code_from_text, wr
 
 global_config = yaml.safe_load(open("./config/global.yaml", "r"))
 
+
+def _extract_mmlu_choice(response):
+    """Extract a deliberate A-J choice without guessing from arbitrary prose."""
+    if not isinstance(response, str):
+        return ""
+    tagged = re.findall(
+        r"FINAL\s+ANSWER\s*:\s*\[?\s*([A-J])\b",
+        response,
+        flags=re.IGNORECASE,
+    )
+    if tagged:
+        return tagged[-1].upper()
+    standalone = re.findall(
+        r"^\s*\[?\s*([A-J])\s*\]?[.!]?\s*$",
+        response,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if standalone:
+        return standalone[-1].upper()
+    explicit = re.findall(
+        r"(?:answer\s+is|option|choice)\s*[:\-]?\s*\(?([A-J])\)?\b",
+        response,
+        flags=re.IGNORECASE,
+    )
+    return explicit[-1].upper() if explicit else ""
+
 class Reasoning_Agent(Agent):
     def __init__(self, role, role_prompt, index,  model="gpt", actions=[], policy=None, global_info=None,initial_dialog_history=None) -> None:
         super().__init__(role, role_prompt, index, model, actions, policy, global_info, initial_dialog_history)
@@ -259,12 +285,26 @@ class Reasoning_Agent(Agent):
             logger.info("[Reasoning Path]: " + reasoning_result)
             return reasoning_result, total_tokens
         else:
-            regex_answer = r"FINAL ANSWER:([\s\S]*)"
-            matches = re.findall(regex_answer, raw_response)
-            if len(matches) > 0:
-                logger.info("[Final Answer]: "+matches[0])
-                global_info.add_answer(matches[0])
-                print("\033[1;33mAgent {} answered: {}\033[0m".format(self.role, matches[0]))
+            if global_info.task.get("type") in {"MMLU", "MMLU-Pro"}:
+                answer = _extract_mmlu_choice(raw_response)
+                if answer:
+                    logger.info("[Final Answer]: " + answer)
+                    global_info.add_answer(answer)
+                    print("\033[1;33mAgent {} answered: {}\033[0m".format(self.role, answer))
+                else:
+                    logger.warning(
+                        "[Final Answer] Missing from reasoning response; "
+                        "requesting a bounded formatting pass"
+                    )
+                    _, formatting_tokens = self._answer_operation(global_info)
+                    total_tokens += formatting_tokens
+            else:
+                regex_answer = r"FINAL ANSWER:([\s\S]*)"
+                matches = re.findall(regex_answer, raw_response)
+                if len(matches) > 0:
+                    logger.info("[Final Answer]: "+matches[0])
+                    global_info.add_answer(matches[0])
+                    print("\033[1;33mAgent {} answered: {}\033[0m".format(self.role, matches[0]))
             
             reasoning_result = action.get("parameter") + raw_response
             logger.info("[Reasoning Path]: " + reasoning_result)
@@ -292,7 +332,11 @@ class Reasoning_Agent(Agent):
             query_prompt =  "\n".join(select_prompt['answer'])
         logger.info("[System Prompt] {}\n[Query] {}\n".format(self.system_prompt, query_prompt))
         
-        raw_response, total_tokens = self._query(query_prompt)
+        is_mmlu = global_info.task.get("type") in {"MMLU", "MMLU-Pro"}
+        raw_response, total_tokens = self._query(
+            query_prompt,
+            max_tokens=256 if is_mmlu else None,
+        )
         logger.info("[Format to Final Answer]: "+ raw_response)
         
         if code_generated_type:
@@ -314,6 +358,18 @@ class Reasoning_Agent(Agent):
                 return matches[0], total_tokens
             else:
                 return "", total_tokens
+        elif is_mmlu:
+            answer = _extract_mmlu_choice(raw_response)
+            if answer:
+                logger.info("[Final Answer]: " + answer)
+                global_info.add_answer(answer)
+                return answer, total_tokens
+            logger.info(
+                "[Error] No MMLU choice found in the formatting response: {}\n".format(
+                    raw_response
+                )
+            )
+            return "", total_tokens
         else:
             regex_answer = r"FINAL ANSWER: ([\s\S]*)"
             matches = re.findall(regex_answer, raw_response)
@@ -326,7 +382,7 @@ class Reasoning_Agent(Agent):
                 return "", total_tokens
 
     @retry(wait=wait_exponential(min=3, max=5), stop=stop_after_attempt(2))
-    def _query(self, query) -> str:
+    def _query(self, query, max_tokens=None) -> tuple[str, int]:
         prompt = {"role": "user", "content": str(query)}
         if self.dialog_history[-1] != prompt and self.dialog_history[-1]['role'] != 'user':
             self.dialog_history.append(prompt)
@@ -334,10 +390,13 @@ class Reasoning_Agent(Agent):
             self.dialog_history[-1]['content'] += str(query)
         self.last_prompt = prompt['content']
         messages = list(self.dialog_history)
-        response = self.query_func(messages)
-        message = {"role": "assistant", "content": str(response)}
+        response, total_tokens = self.query_func(
+            messages, max_tokens=max_tokens
+        )
+        response = "" if response is None else str(response)
+        message = {"role": "assistant", "content": response}
         self.dialog_history.append(dict(message))
-        return response
+        return response, total_tokens
 
     def _tool_operation(self, action:json, global_info) ->str:
         logger = global_info.logger 
@@ -372,4 +431,4 @@ class Reasoning_Agent(Agent):
             return None, None   
 
     def _interaction_operation(self, code, env, global_info) -> str:
-        pass 
+        pass

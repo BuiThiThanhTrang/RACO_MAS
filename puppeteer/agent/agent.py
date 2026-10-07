@@ -75,8 +75,13 @@ class Agent(ABC):
             "hash": self.hash
         }
     def _get_query_function(self):
-        def query_func(messages, system_prompt=None):
-            return query_manager.query(self.model, messages, system_prompt)
+        def query_func(messages, system_prompt=None, max_tokens=None):
+            return query_manager.query(
+                self.model,
+                messages,
+                system_prompt,
+                max_tokens=max_tokens,
+            )
         return query_func
     
     @abstractmethod

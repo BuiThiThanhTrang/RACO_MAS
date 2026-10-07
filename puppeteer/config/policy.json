@@ -4,7 +4,7 @@
     },
     "paths": {
         "checkpoint_path": "checkpoint/MMLU-Pro_train",
-        "model_path": "D:\\SideProject\\chatdev_original\\ChatDev\\puppeteer\\checkpoint\\MMLU-Pro_train\\policy_net_20260915_105454.pt"
+        "model_path": null
     },
     "training": {
         "loading": false,

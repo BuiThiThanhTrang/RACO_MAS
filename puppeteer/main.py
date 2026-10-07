@@ -36,22 +36,42 @@ def main():
         default=None,
         help="Load policy and optimizer state from this checkpoint before training",
     )
+    parser.add_argument(
+        "--checkpoint_every",
+        type=int,
+        default=1,
+        help="Save resume_latest.pt every N completed MMLU-Pro rows (default: 1)",
+    )
 
     args = parser.parse_args()
     if args.data_start < 0:
         parser.error("--data_start must be non-negative")
     if args.data_limit is not None and args.data_limit < 1:
         parser.error("--data_limit must be positive")
+    if args.checkpoint_every < 1:
+        parser.error("--checkpoint_every must be positive")
     if args.data_start and args.task != "MMLU-Pro":
         parser.error("--data_start resume is currently supported only for MMLU-Pro")
     if args.data_start and not args.checkpoint:
         parser.error("--data_start requires --checkpoint to keep policy state aligned")
 
     checkpoint = None
+    checkpoint_completed_rows = None
+    checkpoint_last_result_id = None
     if args.checkpoint:
         checkpoint = Path(args.checkpoint).resolve()
         if not checkpoint.is_file():
             parser.error(f"Checkpoint not found: {checkpoint}")
+        import torch
+
+        checkpoint_data = torch.load(
+            checkpoint,
+            map_location="cpu",
+            weights_only=False,
+        )
+        checkpoint_metadata = checkpoint_data.get("metadata") or {}
+        checkpoint_completed_rows = checkpoint_metadata.get("completed_rows")
+        checkpoint_last_result_id = checkpoint_metadata.get("result_last_id")
 
     with open("config/global.yaml", "r", encoding="utf-8") as source:
         global_config = yaml.safe_load(source)
@@ -93,6 +113,9 @@ def main():
             args.data_limit,
             seed=args.seed,
             data_start=args.data_start,
+            checkpoint_every=args.checkpoint_every,
+            checkpoint_completed_rows=checkpoint_completed_rows,
+            checkpoint_last_result_id=checkpoint_last_result_id,
         )
     elif args.task in task_map:
         task_map[args.task](
