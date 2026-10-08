@@ -7,6 +7,8 @@ from typing import Any, Mapping
 
 SCHEMA_VERSION = "1.0"
 
+AFFINITY_LEVELS = ("low", "medium", "high")
+
 CAPABILITY_DIMENSIONS = (
     "planning",
     "general_reasoning",
@@ -129,6 +131,14 @@ class RoleCard:
         }
 
     def to_prompt(self) -> str:
+        input_fields = ", ".join(self.expected_input.fields or ("unspecified",))
+        input_requirements = "; ".join(
+            self.expected_input.requirements or ("none",)
+        )
+        output_fields = ", ".join(self.expected_output.fields or ("unspecified",))
+        output_requirements = "; ".join(
+            self.expected_output.requirements or ("none",)
+        )
         parts = [
             f"Role: {self.role_name}",
             f"Goal: {self.role_goal}",
@@ -136,10 +146,95 @@ class RoleCard:
             "Allowed actions: " + ", ".join(self.allowed_actions or ("none",)),
             "Forbidden actions: " + ", ".join(self.forbidden_actions or ("none",)),
             "Expected input type: " + self.expected_input.type,
+            "Expected input fields: " + input_fields,
+            "Input requirements: " + input_requirements,
             "Expected output type: " + self.expected_output.type,
+            "Expected output fields: " + output_fields,
+            "Output requirements: " + output_requirements,
             "Tools: " + ", ".join(self.tools or ("none",)),
         ]
         return "\n".join(parts)
+
+
+@dataclass(frozen=True)
+class RoutingProfile:
+    """Static, qualitative information exposed only to the orchestrator.
+
+    Routing profiles deliberately avoid probabilities, observation counts and
+    uncertainty.  They describe where a role is useful; they are not empirical
+    estimates of the underlying model's skill.
+    """
+
+    use_when: tuple[str, ...]
+    avoid_when: tuple[str, ...]
+    capability_affinity: Mapping[str, str]
+    expected_contribution: tuple[str, ...]
+    output_contract: IOSchema
+    handoff_requirements: tuple[str, ...] = ()
+    schema_version: str = SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        invalid = {
+            str(value).lower()
+            for value in self.capability_affinity.values()
+            if str(value).lower() not in AFFINITY_LEVELS
+        }
+        if invalid:
+            raise ValueError(
+                "RoutingProfile capability affinities must be low, medium, or high; "
+                f"got {sorted(invalid)}"
+            )
+
+    @classmethod
+    def from_role_card(cls, card: "RoleCard") -> "RoutingProfile":
+        def level(value: float) -> str:
+            if value >= 0.7:
+                return "high"
+            if value <= 0.4:
+                return "low"
+            return "medium"
+
+        return cls(
+            use_when=card.core_functions,
+            avoid_when=(),
+            capability_affinity={
+                name: level(float(value))
+                for name, value in card.capability_prior.items()
+            },
+            expected_contribution=card.core_functions,
+            output_contract=card.expected_output,
+            handoff_requirements=(),
+        )
+
+    @classmethod
+    def from_dict(
+        cls, data: Mapping[str, Any] | None, role_card: "RoleCard"
+    ) -> "RoutingProfile":
+        if not data:
+            return cls.from_role_card(role_card)
+        return cls(
+            schema_version=str(data.get("schema_version", SCHEMA_VERSION)),
+            use_when=_as_tuple(data.get("use_when")),
+            avoid_when=_as_tuple(data.get("avoid_when")),
+            capability_affinity={
+                str(name): str(value).lower()
+                for name, value in (data.get("capability_affinity") or {}).items()
+            },
+            expected_contribution=_as_tuple(data.get("expected_contribution")),
+            output_contract=IOSchema.from_dict(data.get("output_contract")),
+            handoff_requirements=_as_tuple(data.get("handoff_requirements")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "use_when": list(self.use_when),
+            "avoid_when": list(self.avoid_when),
+            "capability_affinity": dict(self.capability_affinity),
+            "expected_contribution": list(self.expected_contribution),
+            "output_contract": self.output_contract.to_dict(),
+            "handoff_requirements": list(self.handoff_requirements),
+        }
 
 
 @dataclass(frozen=True)
@@ -147,6 +242,7 @@ class TeammateSpec:
     teammate_id: str
     backbone: str
     role_card: RoleCard
+    routing_profile: RoutingProfile | None = None
     provider_profile: str | None = None
     decoding: DecodingConfig = field(default_factory=DecodingConfig)
     available: bool = True
@@ -158,9 +254,14 @@ class TeammateSpec:
             raise ValueError("TeammateSpec.teammate_id must not be empty")
         if not self.backbone.strip():
             raise ValueError("TeammateSpec.backbone must not be empty")
+        if self.routing_profile is None:
+            object.__setattr__(
+                self, "routing_profile", RoutingProfile.from_role_card(self.role_card)
+            )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "TeammateSpec":
+        role_card = RoleCard.from_dict(data["role_card"])
         return cls(
             schema_version=str(data.get("schema_version", SCHEMA_VERSION)),
             teammate_id=str(data["teammate_id"]),
@@ -169,7 +270,10 @@ class TeammateSpec:
             decoding=DecodingConfig.from_dict(data.get("decoding")),
             available=bool(data.get("available", True)),
             metadata=dict(data.get("metadata") or {}),
-            role_card=RoleCard.from_dict(data["role_card"]),
+            role_card=role_card,
+            routing_profile=RoutingProfile.from_dict(
+                data.get("routing_profile"), role_card
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -182,6 +286,35 @@ class TeammateSpec:
             "available": self.available,
             "metadata": dict(self.metadata),
             "role_card": self.role_card.to_dict(),
+            "routing_profile": self.routing_profile.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class PlannerCandidateView:
+    """Identity-safe, static candidate description supplied to an LLM planner."""
+
+    candidate_id: int
+    role_name: str
+    role_goal: str
+    core_functions: tuple[str, ...]
+    allowed_actions: tuple[str, ...]
+    expected_input: IOSchema
+    routing_profile: RoutingProfile
+    tools: tuple[str, ...]
+    available: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "role_name": self.role_name,
+            "role_goal": self.role_goal,
+            "core_functions": list(self.core_functions),
+            "allowed_actions": list(self.allowed_actions),
+            "expected_input": self.expected_input.to_dict(),
+            "routing_profile": self.routing_profile.to_dict(),
+            "tools": list(self.tools),
+            "available": self.available,
         }
 
 

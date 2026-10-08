@@ -109,6 +109,16 @@ For final evaluation, replace `dev` with `final` in the evaluation commands. Kee
 
 MMLU-Pro `validation` aliases the research dev subset (140 items from official test), not official validation (70 items). Research `final` contains 2,000 official-test items, not the full official test set. Report these subset names and sizes with results. CW uses its existing 200-item source and fixed research splits.
 
+## Frozen LLM planner experiments
+
+The repository also provides a no-training orchestration path for MMLU-Pro and
+SRDD. It uses static role/routing profiles, a frozen structured-output planner,
+homogeneous Qwen3.5-9B actor pools, and W3D2. The two experimental settings are
+`naive` (no history) and `evolving` (task-level route outcomes only).
+
+See [the frozen planner guide](puppeteer/docs/frozen_llm_planner_guide.md) for
+configuration, commands, and comparison invariants.
+
 # Customization 
 
 Puppeteer provides multiple ways to tailor the system to your needs

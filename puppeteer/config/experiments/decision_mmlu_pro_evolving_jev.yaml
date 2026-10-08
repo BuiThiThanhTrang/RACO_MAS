@@ -1,0 +1,51 @@
+mode: frozen
+seed: 42
+personas_path: personas/role_aware/mmlu_pro_qwen35_9b_pool.jsonl
+output_dir: runs
+
+dataset:
+  name: MMLU-Pro
+  mode: test
+  data_limit: null
+  data_start: 0
+  split_seed: 42
+
+tools:
+  allowed: []
+
+profiles:
+  mode: static_role_cards
+  update_enabled: false
+  include_uncertainty: false
+  reset_scope: run
+  initialization:
+    source: role_cards
+    path: null
+    required_for_train: false
+
+experience:
+  mode: route_outcome
+  reset_scope: run
+  retrieval_limit: 20
+
+policy:
+  type: decision_model_planner
+  policy_mode: frozen
+  decision:
+    provider: openrouter
+    model: typesafe/jev-1.13
+    api_key_env: OPENROUTER_API_KEY
+    timeout_seconds: 30
+    max_retries: 5
+    retry_backoff_seconds: 2
+    max_retry_delay_seconds: 30
+    max_options: 255
+    experience_limit: 20
+
+global_config:
+  graph:
+    max_width: 3
+    max_depth: 2
+  aggregation:
+    mode: majority
+    seed: 42

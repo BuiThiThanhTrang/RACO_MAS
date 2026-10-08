@@ -22,6 +22,19 @@ ROLE_CAPABILITY_SCOPES = {
     "Integrator / Concluder": ("integration", "general_reasoning", "verification"),
     "Python Tool Agent": ("tool_use", "software_engineering", "quantitative_reasoning", "verification"),
     "Stop Controller": ("planning", "verification", "integration"),
+    "Quantitative & Formal Reasoner": ("quantitative_reasoning", "general_reasoning", "verification"),
+    "Natural & Life Science Specialist": ("domain_reasoning", "general_reasoning", "verification"),
+    "Computing & Engineering Specialist": ("software_engineering", "domain_reasoning", "verification"),
+    "Social, Legal & Business Analyst": ("domain_reasoning", "general_reasoning", "verification"),
+    "Humanities & Behavioral Analyst": ("domain_reasoning", "general_reasoning", "verification"),
+    "Generalist Independent Solver": ("general_reasoning", "integration", "verification"),
+    "Adversarial Verifier": ("verification", "repair", "general_reasoning"),
+    "Requirements Analyst": ("planning", "software_engineering", "integration"),
+    "Solution Architect": ("planning", "software_engineering", "integration"),
+    "Implementation Engineer": ("software_engineering", "integration", "repair"),
+    "Test & Execution Specialist": ("tool_use", "software_engineering", "verification", "repair"),
+    "Debug & Repair Specialist": ("repair", "software_engineering", "verification"),
+    "Coverage Reviewer": ("verification", "integration", "software_engineering"),
 }
 
 TASK_CAPABILITY_SCOPES = {

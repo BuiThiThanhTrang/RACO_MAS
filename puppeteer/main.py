@@ -61,8 +61,10 @@ def _resolve_policy_config(experiment, task, dataset_mode, policy_mode, checkpoi
         raise ValueError(
             "policy_mode=initialized cannot load a checkpoint; use evolved"
         )
-    if dataset_mode == "final" and policy_mode != "evolved":
-        raise ValueError("dataset_mode=final requires policy_mode=evolved")
+    if dataset_mode == "final" and policy_mode not in {"evolved", "frozen"}:
+        raise ValueError("dataset_mode=final requires policy_mode=evolved or frozen")
+    if policy_mode == "frozen" and checkpoint is not None:
+        raise ValueError("policy_mode=frozen does not load a learned policy checkpoint")
     if checkpoint is not None and not Path(checkpoint).is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint}")
 
@@ -75,7 +77,7 @@ def _resolve_policy_config(experiment, task, dataset_mode, policy_mode, checkpoi
     training["training"] = bool(
         dataset_mode == "train" and policy_mode == "train"
     )
-    if policy_mode not in {"initialized", "evolved", "train"}:
+    if policy_mode not in {"initialized", "evolved", "train", "frozen"}:
         raise ValueError(f"Unknown policy mode: {policy_mode}")
     return config
 
@@ -106,7 +108,7 @@ def _resolve_profile_initialization(
         return source, str(configured.with_name(reference_name))
 
     source = str(source_override or configured_source)
-    if source in {"checkpoint", "priors"}:
+    if source in {"checkpoint", "priors", "role_cards"}:
         if path_override is not None:
             raise ValueError(
                 f"--profile_path cannot be used with profile source {source}"
@@ -124,7 +126,11 @@ def _resolve_profile_initialization(
 
 def main():
     parser = argparse.ArgumentParser(description="Run role-aware benchmark tasks")
-    parser.add_argument("task", nargs="?", choices=["MMLU-Pro", "gsm-hard", "SRDD", "CW"])
+    parser.add_argument(
+        "task",
+        nargs="?",
+        choices=["MMLU-Pro", "gsm-hard", "SRDD", "CW", "GAIA", "MuSiQue"],
+    )
     parser.add_argument(
         "mode",
         nargs="?",
@@ -135,7 +141,20 @@ def main():
         default="config/experiments/role_aware_gsm.yaml",
         help="Per-run experiment config. The source file is never modified.",
     )
-    parser.add_argument("--level", type=int, default=1)
+    parser.add_argument(
+        "--level",
+        type=int,
+        choices=[1, 2, 3],
+        default=None,
+        help="GAIA difficulty level. Defaults to dataset.level in the config.",
+    )
+    parser.add_argument(
+        "--hop_count",
+        type=int,
+        choices=[2, 3, 4],
+        default=None,
+        help="Optional MuSiQue hop-count filter. Defaults to dataset.hop_count.",
+    )
     parser.add_argument("--index", type=int, default=-1)
     parser.add_argument("--data_limit", type=int, default=None)
     parser.add_argument("--data_start", type=int, default=None)
@@ -149,7 +168,7 @@ def main():
     parser.add_argument("--personas", type=str, default=None)
     parser.add_argument(
         "--policy_mode",
-        choices=["initialized", "evolved", "train"],
+        choices=["initialized", "evolved", "train", "frozen"],
         default=None,
     )
     parser.add_argument("--checkpoint", type=str, default=None)
@@ -166,7 +185,7 @@ def main():
     )
     parser.add_argument(
         "--profile_source",
-        choices=["checkpoint", "probe", "reference", "priors"],
+        choices=["checkpoint", "probe", "reference", "priors", "role_cards"],
         default=None,
     )
     parser.add_argument("--profile_path", type=str, default=None)
@@ -188,6 +207,12 @@ def main():
     dataset_mode = args.mode or experiment.dataset.mode
     data_limit = args.data_limit if args.data_limit is not None else experiment.dataset.data_limit
     data_start = args.data_start if args.data_start is not None else experiment.dataset.data_start
+    dataset_level = args.level if args.level is not None else experiment.dataset.level
+    dataset_hop_count = (
+        args.hop_count
+        if args.hop_count is not None
+        else experiment.dataset.hop_count
+    )
     personas_path = args.personas or experiment.personas_path
     seed = args.seed if args.seed is not None else experiment.seed
     policy_mode = args.policy_mode or str(experiment.policy.get("policy_mode", experiment.mode))
@@ -239,6 +264,8 @@ def main():
         experiment.dataset,
         name=task,
         mode=dataset_mode,
+        level=dataset_level,
+        hop_count=dataset_hop_count,
         data_limit=data_limit,
         data_start=data_start,
     )
@@ -279,6 +306,10 @@ def main():
         from tasks import srdd as task_module
     elif task == "CW":
         from tasks import creative_writing as task_module
+    elif task == "GAIA":
+        from tasks import gaia as task_module
+    elif task == "MuSiQue":
+        from tasks import musique as task_module
     else:
         raise ValueError(f"Unknown task: {task}")
 
@@ -298,6 +329,7 @@ def main():
         policy_config=experiment.policy,
         tool_policy=experiment.tools,
         profile_config=experiment.profiles,
+        experience_config=experiment.experience,
         checkpoint_config=experiment.checkpoint,
         run_dir=run_dir,
         dataset_name=task,
@@ -344,6 +376,10 @@ def main():
     }
     if task == "gsm-hard":
         run_kwargs["result_suffix"] = args.result_suffix
+    elif task == "GAIA":
+        run_kwargs["level"] = dataset_level
+    elif task == "MuSiQue":
+        run_kwargs["hop_count"] = dataset_hop_count
     task_module.run(
         runner,
         evaluator,

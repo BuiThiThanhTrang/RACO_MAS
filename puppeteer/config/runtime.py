@@ -14,6 +14,8 @@ import yaml
 class DatasetConfig:
     name: str
     mode: str
+    level: int | None = None
+    hop_count: int | None = None
     data_limit: int | None = None
     data_start: int = 0
     split_seed: int = 42
@@ -38,6 +40,9 @@ class ProfileInitializationConfig:
 
 @dataclass(frozen=True)
 class ProfileConfig:
+    mode: str = "capability_profiles"
+    update_enabled: bool = True
+    include_uncertainty: bool = True
     alpha: float = 0.2
     reset_scope: str = "run"
     update_strategy: str = "role_task_intersection"
@@ -49,6 +54,14 @@ class ProfileConfig:
     initialization: ProfileInitializationConfig = field(
         default_factory=ProfileInitializationConfig
     )
+
+
+@dataclass(frozen=True)
+class ExperienceConfig:
+    mode: str = "none"
+    reset_scope: str = "run"
+    path: str | None = None
+    retrieval_limit: int = 20
 
 
 @dataclass(frozen=True)
@@ -69,6 +82,7 @@ class ExperimentConfig:
     policy: Mapping[str, Any]
     tools: ToolPolicyConfig = field(default_factory=ToolPolicyConfig)
     profiles: ProfileConfig = field(default_factory=ProfileConfig)
+    experience: ExperienceConfig = field(default_factory=ExperienceConfig)
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     global_config: Mapping[str, Any] = field(default_factory=dict)
     source_path: str | None = None
@@ -125,18 +139,92 @@ def load_experiment_config(
     initialization_raw = profiles_raw.get("initialization") or {}
     initialization_source = str(initialization_raw.get("source", "probe"))
     if initialization_source not in {
-        "checkpoint", "probe", "reference", "priors"
+        "checkpoint", "probe", "reference", "priors", "role_cards"
     }:
         raise ValueError(
             "profiles.initialization.source must be checkpoint, probe, reference, "
-            "or priors"
+            "priors, or role_cards"
         )
+    profile_mode = str(profiles_raw.get("mode", "capability_profiles"))
+    if profile_mode not in {"capability_profiles", "static_role_cards"}:
+        raise ValueError("profiles.mode must be capability_profiles or static_role_cards")
+    if profile_mode == "static_role_cards" and initialization_source != "role_cards":
+        raise ValueError("static_role_cards requires profiles.initialization.source=role_cards")
+    experience_raw = raw.get("experience") or {}
+    experience_mode = str(experience_raw.get("mode", "none"))
+    if experience_mode not in {"none", "route_outcome"}:
+        raise ValueError("experience.mode must be none or route_outcome")
+    if int(experience_raw.get("retrieval_limit", 20)) < 0:
+        raise ValueError("experience.retrieval_limit must be nonnegative")
     checkpoint_raw = raw.get("checkpoint") or {}
     reset_scope = str(profiles_raw.get("reset_scope", "teammate_sequence"))
     if reset_scope not in {"episode", "teammate_sequence", "run"}:
         raise ValueError("profiles.reset_scope must be episode, teammate_sequence, or run")
 
     policy_raw = raw.get("policy") or {}
+    policy_type = str(policy_raw.get("type", "role_aware_reinforce"))
+    if policy_type not in {
+        "role_aware_reinforce",
+        "frozen_llm_planner",
+        "decision_model_planner",
+    }:
+        raise ValueError(
+            "policy.type must be role_aware_reinforce, frozen_llm_planner, "
+            "or decision_model_planner"
+        )
+    if policy_type == "frozen_llm_planner":
+        planner = policy_raw.get("planner") or {}
+        if not planner.get("model"):
+            raise ValueError("frozen_llm_planner requires policy.planner.model")
+        if profile_mode != "static_role_cards":
+            raise ValueError("frozen_llm_planner requires profiles.mode=static_role_cards")
+    if policy_type == "decision_model_planner":
+        decision = policy_raw.get("decision") or {}
+        if not decision.get("model"):
+            raise ValueError("decision_model_planner requires policy.decision.model")
+        if str(decision.get("provider", "openrouter")) not in {
+            "openrouter",
+            "jev",
+            "cloudflare",
+            "systemone",
+        }:
+            raise ValueError(
+                "policy.decision.provider must be openrouter, jev, cloudflare, "
+                "or systemone"
+            )
+        if int(decision.get("max_options", 255)) < 1:
+            raise ValueError("policy.decision.max_options must be positive")
+        if profile_mode != "static_role_cards":
+            raise ValueError(
+                "decision_model_planner requires profiles.mode=static_role_cards"
+            )
+    routing_guard = policy_raw.get("routing_guard") or {}
+    if routing_guard:
+        guard_profile = str(routing_guard.get("profile", "gaia_stage_v1"))
+        if guard_profile not in {
+            "gaia_stage_v1",
+            "gaia_stage_v2",
+            "musique_stage_v1",
+            "musique_dynamic_v2",
+        }:
+            raise ValueError(
+                "policy.routing_guard.profile must be gaia_stage_v1, gaia_stage_v2, "
+                "musique_stage_v1, or musique_dynamic_v2"
+            )
+        if int(routing_guard.get("max_role_calls_per_path", 1)) < 1:
+            raise ValueError(
+                "policy.routing_guard.max_role_calls_per_path must be positive"
+            )
+        answer_extraction = routing_guard.get("answer_extraction") or {}
+        if answer_extraction.get("enabled", False):
+            if not answer_extraction.get("model"):
+                raise ValueError(
+                    "routing_guard.answer_extraction.model is required when enabled"
+                )
+            if int(answer_extraction.get("max_repair_attempts", 1)) < 0:
+                raise ValueError(
+                    "routing_guard.answer_extraction.max_repair_attempts must be nonnegative"
+                )
     routing = policy_raw.get("routing", {})
     routing_mode = routing.get("mode", "legacy_threshold")
     if routing_mode not in {
@@ -196,6 +284,39 @@ def load_experiment_config(
         raise ValueError("Unknown aggregation.mode")
     if aggregation.get("mode") == "majority_verifier" and not aggregation.get("verifier_model"):
         raise ValueError("aggregation.verifier_model is required")
+    musique_runtime = (raw.get("global_config") or {}).get("musique", {}) or {}
+    semantic_outcome = musique_runtime.get("semantic_outcome") or {}
+    if semantic_outcome.get("enabled", False):
+        if not semantic_outcome.get("model"):
+            raise ValueError(
+                "global_config.musique.semantic_outcome.model is required when enabled"
+            )
+        if int(semantic_outcome.get("max_repair_attempts", 1)) < 0:
+            raise ValueError(
+                "global_config.musique.semantic_outcome.max_repair_attempts must be nonnegative"
+            )
+        allowed_semantic_targets = {
+            "reporting",
+            "route_experience",
+            "profile_evidence",
+            "training_reward",
+        }
+        unknown_targets = {
+            str(value)
+            for value in semantic_outcome.get("use_for", ())
+        } - allowed_semantic_targets
+        if unknown_targets:
+            raise ValueError(
+                "Unknown musique.semantic_outcome.use_for targets: "
+                + ", ".join(sorted(unknown_targets))
+            )
+        if str(semantic_outcome.get("failure_policy", "exact_match")) not in {
+            "exact_match",
+            "raise",
+        }:
+            raise ValueError(
+                "musique.semantic_outcome.failure_policy must be exact_match or raise"
+            )
     return ExperimentConfig(
         run_id=run_id,
         seed=seed,
@@ -205,6 +326,16 @@ def load_experiment_config(
         dataset=DatasetConfig(
             name=dataset_name,
             mode=dataset_mode,
+            level=(
+                int(dataset_raw["level"])
+                if dataset_raw.get("level") is not None
+                else None
+            ),
+            hop_count=(
+                int(dataset_raw["hop_count"])
+                if dataset_raw.get("hop_count") is not None
+                else None
+            ),
             data_limit=dataset_raw.get("data_limit"),
             data_start=int(dataset_raw.get("data_start", 0)),
             split_seed=int(dataset_raw.get("split_seed", seed)),
@@ -218,6 +349,9 @@ def load_experiment_config(
         policy=copy.deepcopy(raw.get("policy") or {}),
         tools=ToolPolicyConfig(allowed=tuple(tools_raw.get("allowed") or ())),
         profiles=ProfileConfig(
+            mode=profile_mode,
+            update_enabled=bool(profiles_raw.get("update_enabled", True)),
+            include_uncertainty=bool(profiles_raw.get("include_uncertainty", True)),
             alpha=float(profiles_raw.get("alpha", 0.2)),
             reset_scope=reset_scope,
             update_strategy=str(
@@ -243,6 +377,12 @@ def load_experiment_config(
                     initialization_raw.get("required_for_train", True)
                 ),
             ),
+        ),
+        experience=ExperienceConfig(
+            mode=experience_mode,
+            reset_scope=str(experience_raw.get("reset_scope", "run")),
+            path=experience_raw.get("path"),
+            retrieval_limit=int(experience_raw.get("retrieval_limit", 20)),
         ),
         checkpoint=CheckpointConfig(
             interval_items=int(checkpoint_raw.get("interval_items", 20)),

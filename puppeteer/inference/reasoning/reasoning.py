@@ -2,7 +2,14 @@ from typing import List
 from pathlib import Path
 from contextlib import nullcontext
 from role_aware.audit_trace import AuditTrace, digest, redact
-from role_aware.aggregation import aggregate_candidates, normalize_choice
+from role_aware.aggregation import (
+    aggregate_candidates,
+    aggregate_gaia_candidates,
+    aggregate_musique_candidates,
+    normalize_choice,
+    select_gaia_path_answer,
+    select_srdd_artifact,
+)
 import json
 import os
 import copy
@@ -18,6 +25,12 @@ from agent.agent_info.global_info import GlobalInfo
 
 from tasks.evaluator import BenchmarkEvaluator
 from role_aware.evidence import PathTerminalEvidence
+from role_aware.route_experience import RouteExperienceEvent
+from role_aware.musique_llm_canonicalizer import original_question
+from role_aware.multiagentbench_cs import (
+    build_router_cs_semantic_trace,
+    judge_router_cs_semantic,
+)
 
 main_logger = logging.getLogger('global')
 
@@ -36,6 +49,7 @@ class GraphReasoning:
 
         self.final_answer = ""
         self.answers = []
+        self._musique_semantic_cache = {}
 
         self.global_logger = LogManager("./config/global.yaml", self.task.get("type"),
                                         folder_path=audit.directory if audit else None)
@@ -77,7 +91,17 @@ class GraphReasoning:
             raise
 
     def _new_info(self, index):
-        public_task = {k: v for k, v in self.task.items() if k not in {"Answer", "answer", "target"}}
+        evaluation_only = {
+            "Answer",
+            "answer",
+            "target",
+            "answer_aliases",
+            "gold_decomposition",
+            "supporting_paragraph_indices",
+        }
+        public_task = {
+            key: value for key, value in self.task.items() if key not in evaluation_only
+        }
         info = GlobalInfo(path_id=index, workpath=self.workspace_path, task=public_task,
                           env=self.env, env_name=self.env_name)
         info.audit_split = self.runtime_config.get("audit_split", "unknown")
@@ -95,6 +119,130 @@ class GraphReasoning:
         default = 1.0 if correct else -1.0
         return float(reward_config.get(key, default))
 
+    def _musique_semantic_config(self):
+        musique = self.runtime_config.get("musique", {}) or {}
+        return dict(musique.get("semantic_outcome") or {})
+
+    def _musique_semantic_enabled_for(self, purpose):
+        config = self._musique_semantic_config()
+        if not bool(config.get("enabled", False)):
+            return False
+        use_for = {
+            str(value)
+            for value in config.get(
+                "use_for",
+                ("reporting", "route_experience", "profile_evidence", "training_reward"),
+            )
+        }
+        return str(purpose) in use_for
+
+    def _judge_musique_post_task(
+        self,
+        snapshot,
+        prediction,
+        golds,
+        *,
+        official_success,
+    ):
+        """Run one post-commit call for router CS and semantic correctness."""
+
+        config = self._musique_semantic_config()
+        if not bool(config.get("enabled", False)):
+            return {
+                "verdict": "NOT_EVALUATED",
+                "equivalent": False,
+                "effective_equivalent": official_success,
+                "confidence": None,
+                "reason": "Semantic outcome evaluation is disabled.",
+                "model": None,
+                "tokens": 0,
+                "llm_called": False,
+                "collaboration_evaluated": False,
+            }
+        model = str(config.get("model") or "")
+        if not model:
+            raise ValueError("musique.semantic_outcome.model is required when enabled")
+        cache_key = digest(
+            {
+                "prediction": str(prediction or ""),
+                "golds": [str(value) for value in golds],
+                "question": original_question(self.task.get("Question", "")),
+                "model": model,
+                "candidate_hash": snapshot.get("candidate_hash"),
+                "prompt_version": "router_cs_semantic_v2",
+            }
+        )
+        if cache_key in self._musique_semantic_cache:
+            return dict(self._musique_semantic_cache[cache_key])
+        trace = build_router_cs_semantic_trace(
+            snapshot,
+            self.audit.events,
+            prediction=prediction,
+            accepted_answers=golds,
+            question=original_question(self.task.get("Question", "")),
+        )
+        try:
+            with self.audit.call_scope(
+                path_uid="task",
+                purpose="musique_router_cs_semantic_judge",
+            ):
+                result, tokens = judge_router_cs_semantic(
+                    trace,
+                    model=model,
+                    reasoning_effort=str(config.get("reasoning_effort", "low")),
+                    max_repair_attempts=int(config.get("max_repair_attempts", 1)),
+                    official_success=bool(official_success),
+                )
+            effective = bool(result.get("semantic_correct"))
+            resolved = dict(
+                result,
+                verdict=result.get("answer_verdict"),
+                equivalent=bool(result.get("answer_equivalent")),
+                effective_equivalent=effective,
+                confidence=result.get("answer_confidence"),
+                reason=result.get("answer_rationale"),
+                llm_called=True,
+                collaboration_evaluated=True,
+            )
+            self.audit.emit(
+                "musique_router_cs_semantic_judged",
+                prediction_digest=digest(str(prediction or "")),
+                verdict=resolved.get("verdict"),
+                equivalent=resolved.get("equivalent"),
+                effective_equivalent=effective,
+                confidence=resolved.get("confidence"),
+                routing_planning_score=resolved.get("routing_planning_score"),
+                state_handoff_communication_score=resolved.get(
+                    "state_handoff_communication_score"
+                ),
+                collaboration_score_100=resolved.get("collaboration_score_100"),
+                model=model,
+                tokens=int(tokens),
+            )
+        except Exception as error:
+            if str(config.get("failure_policy", "exact_match")) == "raise":
+                raise
+            resolved = {
+                "verdict": "ERROR_FALLBACK",
+                "equivalent": False,
+                "effective_equivalent": official_success,
+                "confidence": None,
+                "reason": f"Semantic judge failed closed: {type(error).__name__}.",
+                "model": model,
+                "tokens": 0,
+                "llm_called": True,
+                "collaboration_evaluated": False,
+                "error_type": type(error).__name__,
+            }
+            self.audit.emit(
+                "musique_router_cs_semantic_failed",
+                prediction_digest=digest(str(prediction or "")),
+                error_type=type(error).__name__,
+                model=model,
+            )
+        self._musique_semantic_cache[cache_key] = dict(resolved)
+        return dict(resolved)
+
     def _route(self, path):
         capacity = self.max_parallel_paths - len(self.reasoning_paths) + (1 if path else 0)
         if capacity < 1:
@@ -111,6 +259,7 @@ class GraphReasoning:
                             selected=proposal["actions"], capacity=capacity)
         decision_id = proposal["decision_id"]
         requested = proposal["actions"]
+        requested_assignments = proposal.get("assignments") or [None] * len(requested)
         stop = "__orchestrator_stop__"
         if stop in requested and (not path or requested != [stop]):
             raise RuntimeError("STOP must be a sole action on an existing path")
@@ -142,7 +291,10 @@ class GraphReasoning:
                         audit=self.audit, path_uid=uid)
                     target.emit("path_created", inherited_steps=0, inherited_action_ids=[])
                 new_paths.append(target)
-            allocations.append(dict(path_uid=target.path_uid, action=action, action_id=action_id))
+            assignment = requested_assignments[slot] if slot < len(requested_assignments) else None
+            target.global_info.task_signature = tuple(proposal.get("task_signature") or ())
+            allocations.append(dict(path_uid=target.path_uid, action=action, action_id=action_id,
+                                    assignment=assignment))
         self.reasoning_paths.extend(new_paths)
         if hasattr(self.policy, "accept"):
             self.policy.accept(proposal, info.path_uid, allocations)
@@ -161,7 +313,8 @@ class GraphReasoning:
                               float(probs[0, -1].detach()) if probs is not None else None)
             else:
                 target.reserve(self.registry.get_agent_from_idx(allocation["action"]),
-                               allocation["action_id"], decision_id)
+                               allocation["action_id"], decision_id,
+                               assignment=allocation.get("assignment"))
 
     def n_step(self, n):
         try:
@@ -195,6 +348,15 @@ class GraphReasoning:
         if len(answers) == 0:
             main_logger.info("[Aggregation] skipped because this path has no answer candidates.")
             return None
+
+        # A GAIA path is a stateful tool trajectory. Its last answer is expected
+        # to incorporate the evidence collected earlier on that same path. An
+        # answer-only LLM vote can discard that provenance and revive an obsolete
+        # guess, so path selection is deliberately deterministic.
+        if self.task.get("type") in {"GAIA", "MuSiQue"}:
+            selected = select_gaia_path_answer(answers)
+            main_logger.info("[Open QA Path Selection] last non-empty answer: %s", selected)
+            return selected
 
         # only choose the last result without any format or extract
         if query_func is None:
@@ -295,6 +457,7 @@ class GraphReasoning:
             self.audit.emit("path_aggregation", **record)
         self.answers = [v for v in candidates if v is not None]
         aggregation_config = self.runtime_config.get("aggregation", {})
+        selected_candidate_index = None
         if self.task.get("type") in {"MMLU", "MMLU-Pro"}:
             mode = aggregation_config.get("mode", "legacy")
             verifier = None
@@ -315,7 +478,87 @@ class GraphReasoning:
             if mode == "legacy" and len(self.answers) == 1:
                 self.final_answer = self.answers[0]
                 aggregation["prediction"] = self.final_answer
-        elif len(self.answers) <= 1 or self.task.get("type") in {"CW", "SRDD"}:
+        elif self.task.get("type") == "GAIA":
+            mode = aggregation_config.get("mode", "legacy")
+            verifier = None
+            if mode == "majority_verifier":
+                model = aggregation_config.get("verifier_model")
+                if not model:
+                    raise ValueError("aggregation.verifier_model is required")
+                from model.query_manager import query_manager
+
+                def verifier(prompt):
+                    with self.audit.call_scope(
+                        path_uid="task",
+                        purpose="gaia_answer_verifier",
+                        model_size=model_registry.get_model_size(model) or 0,
+                    ):
+                        return query_manager.query(model, prompt)
+
+            aggregation = aggregate_gaia_candidates(
+                candidates,
+                mode=mode,
+                seed=int(aggregation_config.get("seed", 42)),
+                task_id=str(self.task.get("id", "")),
+                question=self.task.get("Question", ""),
+                verifier=verifier,
+            )
+            self.final_answer = aggregation["prediction"]
+        elif self.task.get("type") == "MuSiQue":
+            mode = aggregation_config.get("mode", "legacy")
+            verifier = None
+            fallback_extractor = None
+            routing_guard = getattr(self.policy, "routing_guard", None)
+            if routing_guard is not None and routing_guard.llm_extraction_enabled:
+                def fallback_extractor(candidate, index):
+                    steps = records[index].get("steps") or []
+                    role = steps[-1].get("agent") if steps else "path_aggregation"
+                    parsed = routing_guard.parse_musique_result(
+                        candidate,
+                        question=self.task.get("Question", ""),
+                        role=role,
+                    )
+                    status = (
+                        "FINAL" if parsed.final_answer
+                        else "CANDIDATE" if parsed.candidate_answer
+                        else "NO_ANSWER"
+                    )
+                    return {
+                        "status": status,
+                        "answer": parsed.final_answer or parsed.candidate_answer,
+                        "model": routing_guard.llm_extraction_model,
+                        "tokens": 0,
+                    }
+            if mode == "majority_verifier":
+                model = aggregation_config.get("verifier_model")
+                if not model:
+                    raise ValueError("aggregation.verifier_model is required")
+                from model.query_manager import query_manager
+
+                def verifier(prompt):
+                    with self.audit.call_scope(
+                        path_uid="task",
+                        purpose="musique_answer_verifier",
+                        model_size=model_registry.get_model_size(model) or 0,
+                    ):
+                        return query_manager.query(model, prompt)
+
+            aggregation = aggregate_musique_candidates(
+                candidates,
+                mode=mode,
+                seed=int(aggregation_config.get("seed", 42)),
+                task_id=str(self.task.get("id", "")),
+                question=self.task.get("Question", ""),
+                verifier=verifier,
+                fallback_extractor=fallback_extractor,
+            )
+            self.final_answer = aggregation["prediction"]
+            selected_candidate_index = aggregation.get("selected_candidate_index")
+        elif self.task.get("type") == "SRDD":
+            aggregation = select_srdd_artifact(candidates)
+            self.final_answer = aggregation["prediction"]
+            selected_candidate_index = aggregation["selected_index"]
+        elif len(self.answers) <= 1 or self.task.get("type") == "CW":
             self.final_answer = self.answers[-1] if self.answers else ""
             aggregation = dict(mode="last_artifact", prediction=self.final_answer)
         else:
@@ -331,7 +574,41 @@ class GraphReasoning:
         self.audit.emit("prediction_committed", prediction=self.final_answer,
                         candidate_hash=snapshot["candidate_hash"])
         evaluations = []
+        frozen_planner = getattr(self.policy, "routing_mode", "") == "frozen_llm_planner"
+        final_success = None
+        semantic_success = None
+        effective_success = None
+        semantic_evaluation = None
+        final_metrics = {}
+        final_reward = None
+        musique_answer_scores = None
+        if self.task.get("type") == "MuSiQue":
+            musique_golds = [
+                self.task.get("Answer"),
+                *(self.task.get("answer_aliases") or ()),
+            ]
+            musique_answer_scores = BenchmarkEvaluator.musique_answer_scores(
+                self.final_answer, musique_golds
+            )
+            musique_official_success = bool(musique_answer_scores["answer_em"])
+            if bool(self._musique_semantic_config().get("enabled", False)):
+                semantic_evaluation = self._judge_musique_post_task(
+                    snapshot,
+                    self.final_answer,
+                    musique_golds,
+                    official_success=musique_official_success,
+                )
+                semantic_success = bool(
+                    semantic_evaluation.get("effective_equivalent")
+                )
+            else:
+                semantic_success = musique_official_success
         for idx, (reasoning_path, aggregated_answer) in enumerate(zip(self.reasoning_paths, candidates)):
+            if (frozen_planner and self.task.get("type") == "SRDD"
+                    and idx != selected_candidate_index):
+                evaluations.append(dict(path_uid=reasoning_path.path_uid, skipped=True,
+                                        prediction=aggregated_answer))
+                continue
             if self.task.get("type") in {"MMLU", "MMLU-Pro"} and aggregation_config.get("mode", "legacy") != "legacy":
                 aggregated_answer = normalize_choice(aggregated_answer, self.task.get("choices", "ABCDEFGHIJ")) or ""
             if self.task.get("type") == "MMLU-Pro":
@@ -382,6 +659,74 @@ class GraphReasoning:
                 main_logger.info(metrics)
                 transition["path_uid"] = reasoning_path.path_uid
                 self.policy.finalize_task(transition, reasoning_path.global_info)
+
+            elif self.task.get("type") == "GAIA":
+                gold = self.task.get("Answer")
+                correct = (
+                    BenchmarkEvaluator.check_gaia(aggregated_answer, gold)
+                    if gold is not None
+                    else None
+                )
+                transition = {
+                    'state': reasoning_path.global_info.workflow.state,
+                    'reward': self._binary_task_reward(correct) if correct is not None else 0.0,
+                    'action': None,
+                    'next_state': None,
+                    'done': True,
+                    'path_id': idx,
+                    'candidate_output': aggregated_answer,
+                    'evaluable': gold is not None,
+                }
+                transition["path_uid"] = reasoning_path.path_uid
+                self.policy.finalize_task(transition, reasoning_path.global_info)
+            elif self.task.get("type") == "MuSiQue":
+                golds = [
+                    self.task.get("Answer"),
+                    *(self.task.get("answer_aliases") or ()),
+                ]
+                answer_scores = BenchmarkEvaluator.musique_answer_scores(
+                    aggregated_answer, golds
+                )
+                correct = bool(answer_scores["answer_em"])
+                needs_training_signal = bool(
+                    getattr(self.policy, "optimizer_updates_enabled", False)
+                    and self._musique_semantic_enabled_for("training_reward")
+                )
+                needs_profile_signal = bool(
+                    self.profile_evidence is not None
+                    and self._musique_semantic_enabled_for("profile_evidence")
+                )
+                reward_success = (
+                    bool(semantic_success)
+                    if needs_training_signal and semantic_evaluation is not None
+                    else correct
+                )
+                path_metrics = dict(answer_scores)
+                if semantic_evaluation is not None:
+                    path_metrics["task_semantic_evaluation"] = semantic_evaluation
+                transition = {
+                    'state': reasoning_path.global_info.workflow.state,
+                    'reward': self._binary_task_reward(reward_success),
+                    'action': None,
+                    'next_state': None,
+                    'done': True,
+                    'path_id': idx,
+                    'candidate_output': aggregated_answer,
+                    'metrics': path_metrics,
+                    'official_success': correct,
+                    'semantic_success': (
+                        bool(semantic_success)
+                        if semantic_evaluation is not None
+                        else None
+                    ),
+                    'profile_success': (
+                        bool(semantic_success)
+                        if needs_profile_signal and semantic_evaluation is not None
+                        else correct
+                    ),
+                }
+                transition["path_uid"] = reasoning_path.path_uid
+                self.policy.finalize_task(transition, reasoning_path.global_info)
             elif self.task.get("type") == "CW":
                 reward, metrics = BenchmarkEvaluator.check_commongen(concepts=reasoning_path.global_info.task.get("concepts"), text_path=aggregated_answer)
                 transition = {
@@ -397,7 +742,7 @@ class GraphReasoning:
                 main_logger.info(metrics)
                 transition["path_uid"] = reasoning_path.path_uid
                 self.policy.finalize_task(transition, reasoning_path.global_info)
-            if self.profile_evidence is not None:
+            if self.profile_evidence is not None and transition.get("evaluable", True):
                 task_type = self.task.get("type")
                 if task_type == "SRDD":
                     profile_success = BenchmarkEvaluator.srdd_binary_success(
@@ -408,7 +753,9 @@ class GraphReasoning:
                         transition.get("metrics", {})
                     )
                 else:
-                    profile_success = transition.get("reward", -1) > 0
+                    profile_success = transition.get(
+                        "profile_success", transition.get("reward", -1) > 0
+                    )
                 teammate_ids = tuple(
                     item.get("hash") for item in reasoning_path.agent_sequence
                     if item.get("hash") is not None
@@ -424,15 +771,151 @@ class GraphReasoning:
                     )
                 )
 
-            evaluations.append(dict(path_uid=reasoning_path.path_uid, task_reward=transition["reward"],
-                                    prediction=aggregated_answer))
+            evaluations.append(dict(
+                path_uid=reasoning_path.path_uid,
+                task_reward=transition["reward"],
+                prediction=aggregated_answer,
+                official_success=transition.get("official_success"),
+                semantic_success=transition.get("semantic_success"),
+            ))
         metrics = self.policy.update()
         if self.profile_evidence is not None:
             self.profile_evidence.flush_task(str(self.task.get("id")))
         for agent in self.registry.ordered_agents:
             agent.reset()
+        if self.task.get("type") in {"MMLU", "MMLU-Pro"}:
+            final_success = BenchmarkEvaluator.check_mmlu(
+                self.final_answer, self.task.get("Answer")
+            )
+            final_reward = self._binary_task_reward(final_success)
+        elif self.task.get("type") == "GAIA" and self.task.get("Answer") is not None:
+            final_success = BenchmarkEvaluator.check_gaia(
+                self.final_answer, self.task.get("Answer")
+            )
+            final_reward = self._binary_task_reward(final_success)
+        elif self.task.get("type") == "MuSiQue":
+            from role_aware.collaboration_metrics import (
+                evaluate_musique_collaboration,
+            )
+
+            answer_scores = musique_answer_scores or BenchmarkEvaluator.musique_answer_scores(
+                self.final_answer,
+                [self.task.get("Answer"), *(self.task.get("answer_aliases") or ())],
+            )
+            collaboration = evaluate_musique_collaboration(
+                records,
+                self.task.get("gold_decomposition") or (),
+                self.task.get("supporting_paragraph_indices") or (),
+                self.task.get("Answer") or "",
+                self.task.get("answer_aliases") or (),
+                selected_candidate_index=selected_candidate_index,
+            )
+            final_success = bool(answer_scores["answer_em"])
+            final_reward = self._binary_task_reward(final_success)
+            if semantic_success is None:
+                semantic_success = final_success
+            effective_success = (
+                semantic_success
+                if self._musique_semantic_enabled_for("training_reward")
+                else final_success
+            )
+            final_metrics = {
+                **answer_scores,
+                "official_success": final_success,
+                "semantic_success": semantic_success,
+                "semantic_evaluation": semantic_evaluation,
+                "router_cs": (
+                    {
+                        key: semantic_evaluation.get(key)
+                        for key in (
+                            "prompt_version",
+                            "routing_planning_score",
+                            "state_handoff_communication_score",
+                            "collaboration_score_raw",
+                            "collaboration_score_100",
+                            "planning_rationale",
+                            "communication_rationale",
+                            "failure_tags",
+                            "critical_decision_ids",
+                            "judge_model",
+                            "judge_tokens",
+                        )
+                    }
+                    if semantic_evaluation is not None
+                    and semantic_evaluation.get("collaboration_evaluated")
+                    else None
+                ),
+                "support_precision": collaboration["support_precision"],
+                "support_recall": collaboration["support_recall"],
+                "support_f1": collaboration["support_f1"],
+                "paper_compatible_support_precision": collaboration[
+                    "paper_compatible_support_precision"
+                ],
+                "paper_compatible_support_recall": collaboration[
+                    "paper_compatible_support_recall"
+                ],
+                "paper_compatible_support_f1": collaboration[
+                    "paper_compatible_support_f1"
+                ],
+                "paper_compatible_supporting_paragraphs": collaboration[
+                    "paper_compatible_supporting_paragraphs"
+                ],
+                "paper_compatible_support_source": collaboration[
+                    "paper_compatible_support_source"
+                ],
+                "collaboration": collaboration,
+            }
+        if effective_success is None:
+            effective_success = final_success
+        signatures = sorted({
+            str(value)
+            for path in self.reasoning_paths
+            for value in (getattr(path.global_info, "task_signature", ()) or ())
+            if str(value).strip()
+        })
+        routes = tuple(
+            tuple(
+                item.get("role") for item in path.agent_sequence
+                if item.get("role") is not None
+            )
+            for path in self.reasoning_paths
+        )
+        experience_success = (
+            semantic_success
+            if (
+                self.task.get("type") == "MuSiQue"
+                and semantic_success is not None
+                and self._musique_semantic_enabled_for("route_experience")
+            )
+            else final_success
+        )
+        self.experience_event = (
+            RouteExperienceEvent(
+                task_id=str(self.task.get("id")),
+                dataset=str(self.task.get("type")),
+                task_signature=tuple(signatures),
+                routes=routes,
+                success=bool(experience_success),
+            )
+            if experience_success is not None
+            else None
+        )
+        self.final_outcome = {
+            "success": final_success,
+            "reward": final_reward,
+            "semantic_success": semantic_success,
+            "effective_success": effective_success,
+            "experience_success": experience_success,
+            "metrics": final_metrics,
+        }
         self.audit.save("evaluation.json", dict(**self.audit.context, gold=self.task.get("Answer"),
-                         paths=evaluations, prediction=self.final_answer, policy_update=metrics))
+                         answer_aliases=self.task.get("answer_aliases", []),
+                         gold_decomposition=self.task.get("gold_decomposition", []),
+                         supporting_paragraph_indices=self.task.get("supporting_paragraph_indices", []),
+                         paths=evaluations, prediction=self.final_answer, policy_update=metrics,
+                         final_outcome=self.final_outcome,
+                         route_experience_event=(self.experience_event.to_dict()
+                                                 if self.experience_event else None)))
         self.audit.emit("task_finished", prediction=self.final_answer, **self.audit.call_totals())
         main_logger.info("[Final Answer]: %s", self.final_answer)
         return self.final_answer, self.task.get("Answer")

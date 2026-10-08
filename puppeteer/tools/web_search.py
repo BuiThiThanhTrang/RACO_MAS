@@ -52,7 +52,7 @@ class Web_Search(Tool):
         except TimeoutError:
             return False, "Timeout"
         except Exception as e:
-            return False, "No results found for query {}".format(query)
+            return False, "Web search failed for query '{}': {}".format(query, e)
 
         if (ans is None) or (len(ans) == 0):
             # raise ValueError(f"No results found for query {query}.")
@@ -124,18 +124,28 @@ class Bing_SearchEngine(Web_Search):
     def __init__(self, name):
         super().__init__()
         self.name = name
+        self.client = None
     
     def search(self, query):
-        try:
-            broswer = self._get_browser()
-        except ImportError as e:
-            return False, str(e)
+        if self.client is None:
+            from tools.utils.web_search_client import build_web_search_client
 
-        broswer.set_address("bing:"+query)
-        if broswer.page_content != None and len(broswer.page_content) != 0:
-            return True, broswer.page_content
-        else:
-            return False, "page not exists in bing, try different search tools"
+            self.client = build_web_search_client()
+        content = self.client.search(query)
+        if content:
+            return True, content
+        return False, "No web search results were returned by the configured provider"
+
+
+@global_tool_registry("search_web")
+class GeneralWebSearchEngine(Bing_SearchEngine):
+    """Provider-neutral web search action.
+
+    ``search_bing`` remains registered as a compatibility alias for existing
+    personas and experiment configs. Both actions use ``web_search.provider``.
+    """
+
+    pass
 
 
 @global_tool_registry("access_website")

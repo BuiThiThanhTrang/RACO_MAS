@@ -7,6 +7,10 @@ import re
 import os
 import signal
 import math
+import string
+from collections import Counter
+
+from role_aware.musique_answers import canonicalize_musique_candidate
 
 from model import query_gpt
 from model.query_manager import query_manager
@@ -192,7 +196,7 @@ class BenchmarkEvaluator:
                 out, err = process.communicate(timeout=10)
             except subprocess.TimeoutExpired:
                 robust_kill(process)
-                return True, "The process completes without encountering any errors."
+                return False, "Execution timed out before successful completion."
 
             return_code = process.returncode
             output = out.decode('utf-8', errors='ignore')
@@ -258,6 +262,169 @@ class BenchmarkEvaluator:
         prediction = BenchmarkEvaluator.extract_choice_answer(final_ans)
         gold = BenchmarkEvaluator.extract_letter(true_ans.strip()).upper()
         return prediction.upper() == gold
+
+    @staticmethod
+    def extract_gaia_answer(text):
+        """Return the concise payload after the last GAIA final-answer marker."""
+        value = "None" if text is None else str(text).strip()
+        matches = re.findall(
+            r"(?is)final\s+answer\s*:\s*(.*)", value
+        )
+        return matches[-1].strip() if matches else value
+
+    @staticmethod
+    def normalize_gaia_string(value, remove_punctuation=True):
+        no_spaces = re.sub(r"\s", "", str(value))
+        if remove_punctuation:
+            translator = str.maketrans("", "", string.punctuation)
+            return no_spaces.lower().translate(translator)
+        return no_spaces.lower()
+
+    @staticmethod
+    def normalize_gaia_number(value):
+        normalized = str(value)
+        for character in ("$", "%", ","):
+            normalized = normalized.replace(character, "")
+        try:
+            return float(normalized)
+        except (TypeError, ValueError):
+            return float("inf")
+
+    @staticmethod
+    def check_gaia(model_answer, ground_truth):
+        """Official GAIA quasi-exact-match scorer, without diagnostic prints.
+
+        This mirrors the public leaderboard scorer: numeric answers ignore
+        currency/percent/comma characters, lists are position-sensitive, and
+        strings ignore whitespace, case, and (outside lists) punctuation.
+        """
+        if ground_truth is None:
+            return False
+        ground_truth = str(ground_truth)
+        model_answer = BenchmarkEvaluator.extract_gaia_answer(model_answer)
+
+        def is_float(value):
+            try:
+                float(value)
+                return True
+            except (TypeError, ValueError):
+                return False
+
+        if is_float(ground_truth):
+            return (
+                BenchmarkEvaluator.normalize_gaia_number(model_answer)
+                == float(ground_truth)
+            )
+
+        if any(character in ground_truth for character in (",", ";")):
+            ground_truth_items = re.split(r"[,;]", ground_truth)
+            model_items = re.split(r"[,;]", model_answer)
+            if len(ground_truth_items) != len(model_items):
+                return False
+            comparisons = []
+            for model_item, truth_item in zip(model_items, ground_truth_items):
+                if is_float(truth_item):
+                    comparisons.append(
+                        BenchmarkEvaluator.normalize_gaia_number(model_item)
+                        == float(truth_item)
+                    )
+                else:
+                    comparisons.append(
+                        BenchmarkEvaluator.normalize_gaia_string(
+                            model_item, remove_punctuation=False
+                        )
+                        == BenchmarkEvaluator.normalize_gaia_string(
+                            truth_item, remove_punctuation=False
+                        )
+                    )
+            return all(comparisons)
+
+        return BenchmarkEvaluator.normalize_gaia_string(
+            model_answer
+        ) == BenchmarkEvaluator.normalize_gaia_string(ground_truth)
+
+    @staticmethod
+    def extract_musique_answer(text):
+        """Extract the concise payload used by the official-style QA scorer."""
+        return canonicalize_musique_candidate(text)
+
+    @staticmethod
+    def normalize_qa_answer(value):
+        """SQuAD/MuSiQue normalization: case, punctuation, articles, whitespace."""
+        text = str(value or "").lower()
+        text = "".join(character for character in text if character not in string.punctuation)
+        text = re.sub(r"\b(a|an|the)\b", " ", text)
+        return " ".join(text.split())
+
+    @staticmethod
+    def _qa_f1(prediction, gold):
+        predicted_tokens = BenchmarkEvaluator.normalize_qa_answer(prediction).split()
+        gold_tokens = BenchmarkEvaluator.normalize_qa_answer(gold).split()
+        if not predicted_tokens or not gold_tokens:
+            return float(predicted_tokens == gold_tokens)
+        common = Counter(predicted_tokens) & Counter(gold_tokens)
+        overlap = sum(common.values())
+        if overlap == 0:
+            return 0.0
+        precision = overlap / len(predicted_tokens)
+        recall = overlap / len(gold_tokens)
+        return 2 * precision * recall / (precision + recall)
+
+    @staticmethod
+    def musique_answer_scores(model_answer, ground_truths):
+        prediction = BenchmarkEvaluator.extract_musique_answer(model_answer)
+        golds = [str(value) for value in (ground_truths or []) if value is not None]
+        if not golds:
+            return {"answer_em": 0.0, "answer_f1": 0.0}
+        normalized_prediction = BenchmarkEvaluator.normalize_qa_answer(prediction)
+        exact = max(
+            float(normalized_prediction == BenchmarkEvaluator.normalize_qa_answer(gold))
+            for gold in golds
+        )
+        f1 = max(BenchmarkEvaluator._qa_f1(prediction, gold) for gold in golds)
+        return {"answer_em": exact, "answer_f1": f1}
+
+    @staticmethod
+    def check_musique(model_answer, ground_truths):
+        return bool(
+            BenchmarkEvaluator.musique_answer_scores(
+                model_answer, ground_truths
+            )["answer_em"]
+        )
+
+    @staticmethod
+    def extract_musique_support_ids(text):
+        """Extract explicit MuSiQue paragraph references such as P5 or paragraph 5."""
+        value = str(text or "")
+        identifiers = {
+            int(match)
+            for match in re.findall(r"(?i)(?<![A-Za-z0-9])P\s*(\d+)\b", value)
+        }
+        for match in re.findall(
+            r"(?i)(?:supporting\s+)?paragraph(?:s|\s+ids?)?\s*[:#-]?\s*"
+            r"([0-9,;\s]+)",
+            value,
+        ):
+            identifiers.update(int(number) for number in re.findall(r"\d+", match))
+        return identifiers
+
+    @staticmethod
+    def musique_support_scores(predicted_ids, gold_ids):
+        predicted = {int(value) for value in (predicted_ids or [])}
+        gold = {int(value) for value in (gold_ids or [])}
+        overlap = len(predicted & gold)
+        precision = overlap / len(predicted) if predicted else float(not gold)
+        recall = overlap / len(gold) if gold else float(not predicted)
+        f1 = (
+            2 * precision * recall / (precision + recall)
+            if precision + recall
+            else 0.0
+        )
+        return {
+            "support_precision": precision,
+            "support_recall": recall,
+            "support_f1": f1,
+        }
 
     @staticmethod
     def check_gsm8k(final_ans, true_ans):
@@ -327,4 +494,4 @@ class BenchmarkEvaluator:
             match = re.search(pattern, text)
             if match:
                 return match.group(1).strip()  
-            return text.strip()  
+            return text.strip()

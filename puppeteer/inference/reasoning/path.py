@@ -52,6 +52,7 @@ class GraphReasoningPath:
         global_info.workflow.workpath = self.workspace_path
         self.pending_action_id = None
         self.pending_decision_id = None
+        self.pending_assignment = None
         self.stop_reason = None
         self.completed_steps = len(global_info.workflow.workflow)
 
@@ -76,9 +77,10 @@ class GraphReasoningPath:
                   steps_completed=self.completed_steps, depth_limit=self.max_step_num)
         return self.state
 
-    def reserve(self, agent, action_id, decision_id):
+    def reserve(self, agent, action_id, decision_id, assignment=None):
         self.current_agent = agent
         self.pending_action_id, self.pending_decision_id = action_id, decision_id
+        self.pending_assignment = assignment
         self.state = ReasoningState.ANSWERING
 
     def step(self):
@@ -101,6 +103,7 @@ class GraphReasoningPath:
                      decision_id=decision_id, purpose="agent", session_id=session.session_id,
                      model_size=size) if self.audit else nullcontext())
             with bind_session(agent, session), scope:
+                self.global_info.current_assignment = self.pending_assignment
                 agent.activate(self.global_info, initial_dialog_history=session.initial_dialog_history)
                 try:
                     current_action, terminated = agent.take_action(
@@ -135,6 +138,7 @@ class GraphReasoningPath:
                   candidate=self.global_info.state_answers[-1] if self.global_info.state_answers else None,
                   session_digest=digest(session.dialog_history))
         self.pending_action_id = None
+        self.pending_assignment = None
         if self.completed_steps == 1 and self.audit and self.audit.enabled:
             write_json(Path(self.workspace_path) / "step_1.json", dict(
                 schema_version="1.0", **self.audit.context,
