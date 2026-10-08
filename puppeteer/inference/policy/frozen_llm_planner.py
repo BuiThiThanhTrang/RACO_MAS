@@ -4,6 +4,7 @@ import copy
 import json
 
 from inference.policy.base_policy import Policy
+from inference.policy.capability_harness import CapabilityRoutingHarness
 from inference.policy.planner_schema import (
     PLANNER_RESPONSE_SCHEMA,
     PlannerAssignment,
@@ -44,6 +45,9 @@ class FrozenLLMPlannerPolicy(Policy):
             str(value) for value in routing_input.get("exclude_task_fields", ())
         }
         self.routing_guard = StageRoutingGuard(self.config.get("routing_guard"))
+        self.routing_harness = CapabilityRoutingHarness(
+            self.config.get("routing_harness")
+        )
         self.experience_store = experience_store
         self.agent_hash_list = list(agent_graph.hash_nodes)
         self.optimizer_updates_enabled = False
@@ -103,15 +107,25 @@ class FrozenLLMPlannerPolicy(Policy):
                 ("gaia_", "musique_")
             )
         )
-        stop_ready = bool(
-            routing_snapshot.state.get(
-                "final_answer_exists"
-                if str(routing_snapshot.state.get("profile", "")).startswith("musique_")
-                else "candidate_answer_exists",
-                False,
+        if "terminal_ready" in routing_snapshot.state:
+            stop_ready = bool(routing_snapshot.state.get("terminal_ready"))
+        else:
+            stop_ready = bool(
+                routing_snapshot.state.get(
+                    "final_answer_exists"
+                    if str(routing_snapshot.state.get("profile", "")).startswith(
+                        "musique_"
+                    )
+                    else "candidate_answer_exists",
+                    False,
+                )
             )
-        )
-        return {
+        previous_outputs = self._previous_outputs(global_info)
+        if self.routing_harness.enabled:
+            previous_outputs = previous_outputs[
+                -self.routing_harness.max_previous_outputs :
+            ]
+        planner_input = {
             "task": {
                 str(key): value
                 for key, value in global_info.task.items()
@@ -122,7 +136,7 @@ class FrozenLLMPlannerPolicy(Policy):
             "completed_steps": len(global_info.workflow.workflow),
             "remaining_depth": getattr(global_info, "remaining_depth", None),
             "remaining_width": capacity,
-            "previous_outputs": self._previous_outputs(global_info),
+            "previous_outputs": previous_outputs,
             "routing_state": dict(routing_snapshot.state),
             "candidate_profiles": candidates,
             "route_experience": experience,
@@ -143,6 +157,20 @@ class FrozenLLMPlannerPolicy(Policy):
                 "only_listed_candidates_are_valid": True,
             },
         }
+        harness_state = routing_snapshot.state.get("routing_harness") or {}
+        planner_input["constraints"]["branch_allowed"] = bool(
+            harness_state.get("branch_allowed", False)
+        )
+        if self.routing_harness.enabled and self.routing_harness.typed_blackboard:
+            planner_input["blackboard"] = self.routing_harness.blackboard(
+                task=global_info.task,
+                routing_state=routing_snapshot.state,
+                previous_outputs=previous_outputs,
+                remaining_depth=getattr(global_info, "remaining_depth", None),
+                remaining_width=capacity,
+                dominant_need=str(harness_state.get("dominant_need", "")),
+            )
+        return planner_input
 
     def _system_prompt(self) -> str:
         prompt = (
@@ -156,6 +184,14 @@ class FrozenLLMPlannerPolicy(Policy):
             "JSON object. Candidate profiles have already been stage-masked; only candidate_id "
             "values listed in candidate_profiles are valid."
         )
+        if self.routing_harness.enabled:
+            prompt += (
+                " Use the typed blackboard as the authoritative compact state. "
+                "The candidate list may include generic cross-benchmark roles but excludes "
+                "explicit scope mismatches. STOP is valid only when terminal_ready is true. "
+                "Select more than one role on an existing path only when branch_allowed is "
+                "true; additional selections create state-sharing recovery/check forks."
+            )
         if self.routing_guard.profile == "musique_dynamic_v2":
             prompt += (
                 " For dynamic MuSiQue routing, diagnose the semantic state before choosing: "
@@ -235,7 +271,18 @@ class FrozenLLMPlannerPolicy(Policy):
             raise ValueError("Routing requires positive capacity")
         all_views = self.agent_graph.public_agent_views()
         routing_snapshot = self.routing_guard.evaluate(global_info, all_views)
-        planner_input = self._planner_input(global_info, capacity, routing_snapshot)
+        harness_result = self.routing_harness.apply(
+            task_type=global_info.task.get("type"),
+            root=global_info.path_id == -1,
+            capacity=capacity,
+            views=all_views,
+            snapshot=routing_snapshot,
+        )
+        routing_snapshot = harness_result.snapshot
+        route_capacity = harness_result.route_capacity
+        planner_input = self._planner_input(
+            global_info, route_capacity, routing_snapshot
+        )
         stop_allowed = bool(planner_input["constraints"]["stop_allowed"])
         messages = [
             {"role": "system", "content": self._system_prompt()},
@@ -281,7 +328,7 @@ class FrozenLLMPlannerPolicy(Policy):
                 decision = self._validate(
                     PlannerDecision.from_dict(payload),
                     global_info,
-                    capacity,
+                    route_capacity,
                     set(routing_snapshot.eligible_candidate_ids),
                     stop_allowed,
                 )
@@ -299,7 +346,7 @@ class FrozenLLMPlannerPolicy(Policy):
                 )
         fallback = decision is None
         decision = decision or self._fallback(
-            global_info, capacity, routing_snapshot
+            global_info, route_capacity, routing_snapshot
         )
         if decision.stop:
             actions = [ORCHESTRATOR_STOP]
@@ -328,6 +375,7 @@ class FrozenLLMPlannerPolicy(Policy):
                 "task_signature": list(decision.task_signature),
                 "state_gaps": list(decision.state_gaps),
                 "capacity": capacity,
+                "route_capacity": route_capacity,
                 "allow_stop": stop_allowed,
                 "remaining_depth": getattr(global_info, "remaining_depth", None),
                 "planner_tokens": tokens,

@@ -9,6 +9,7 @@ from inference.policy.decision_model_client import (
     DecisionModelResponseError,
     SystemOneDecisionClient,
 )
+from inference.policy.capability_harness import CapabilityRoutingHarness
 from inference.policy.planner_schema import PlannerAssignment, PlannerDecision
 from inference.policy.route_bundle import RouteBundleBuilder, RouteOption
 from inference.policy.stage_routing import StageRoutingGuard
@@ -64,6 +65,9 @@ class DecisionPlannerPolicy(Policy):
         )
         self.client = decision_client or SystemOneDecisionClient(decision_config)
         self.routing_guard = StageRoutingGuard(self.config.get("routing_guard"))
+        self.routing_harness = CapabilityRoutingHarness(
+            self.config.get("routing_harness")
+        )
         self.experience_store = experience_store
         self.agent_hash_list = list(agent_graph.hash_nodes)
         self.optimizer_updates_enabled = False
@@ -127,7 +131,9 @@ class DecisionPlannerPolicy(Policy):
         )
         guarded = bool(routing_state.get("enabled", False))
         profile = str(routing_state.get("profile", ""))
-        if profile.startswith("musique_"):
+        if "terminal_ready" in routing_state:
+            terminal_ready = bool(routing_state.get("terminal_ready"))
+        elif profile.startswith("musique_"):
             terminal_ready = bool(routing_state.get("final_answer_exists", False))
         elif profile.startswith("gaia_"):
             terminal_ready = bool(
@@ -135,7 +141,12 @@ class DecisionPlannerPolicy(Policy):
             )
         else:
             terminal_ready = True
-        return {
+        previous_outputs = self._previous_outputs(global_info)
+        if self.routing_harness.enabled:
+            previous_outputs = previous_outputs[
+                -self.routing_harness.max_previous_outputs :
+            ]
+        state = {
             "task": self._router_task(global_info.task),
             "task_type": global_info.task.get("type"),
             "task_signature": list(signature),
@@ -143,7 +154,7 @@ class DecisionPlannerPolicy(Policy):
             "completed_steps": len(global_info.workflow.workflow),
             "remaining_depth": getattr(global_info, "remaining_depth", None),
             "remaining_width": capacity,
-            "previous_outputs": self._previous_outputs(global_info),
+            "previous_outputs": previous_outputs,
             "routing_state": dict(routing_state),
             "candidate_profiles": [dict(view) for view in candidate_views],
             "route_experience": experience,
@@ -161,6 +172,20 @@ class DecisionPlannerPolicy(Policy):
                 "only_listed_candidates_are_valid": True,
             },
         }
+        if self.routing_harness.enabled and self.routing_harness.typed_blackboard:
+            state["blackboard"] = self.routing_harness.blackboard(
+                task=global_info.task,
+                routing_state=routing_state,
+                previous_outputs=previous_outputs,
+                remaining_depth=getattr(global_info, "remaining_depth", None),
+                remaining_width=capacity,
+                dominant_need=str(
+                    (routing_state.get("routing_harness") or {}).get(
+                        "dominant_need", ""
+                    )
+                ),
+            )
+        return state
 
     @staticmethod
     def _semantic_questions() -> dict[str, Any]:
@@ -264,14 +289,22 @@ class DecisionPlannerPolicy(Policy):
 
     @staticmethod
     def _question(
-        root: bool, options: tuple[RouteOption, ...]
+        root: bool,
+        options: tuple[RouteOption, ...],
+        branch_allowed: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         name = "route_bundle" if root else "next_action"
         instructions = (
             "Choose the smallest non-redundant bundle whose roles add distinct value "
             "for solving the task. Width is an upper bound, not a target."
             if root
-            else "Choose exactly one useful next role, or stop when the current path is ready."
+            else (
+                "Choose one useful next role, a two-role state-sharing branch bundle "
+                "when the diagnosed risk justifies it, or stop when the current path "
+                "satisfies the terminal contract."
+                if branch_allowed
+                else "Choose exactly one useful next role, or stop when the current path is ready."
+            )
         )
         return name, {
             name: {
@@ -317,16 +350,25 @@ class DecisionPlannerPolicy(Policy):
         }
 
     @staticmethod
-    def _assignment(view: Mapping[str, Any]) -> PlannerAssignment:
+    def _assignment(
+        view: Mapping[str, Any], dominant_need: str = ""
+    ) -> PlannerAssignment:
         profile = view.get("routing_profile") or {}
         expected = tuple(profile.get("expected_contribution") or ())
         contribution = "; ".join(map(str, expected)).strip()
         if not contribution:
             contribution = str(view.get("role_goal", "Provide a role-specific result"))
         role_name = str(view.get("role_name", "selected role"))
+        output_contract = profile.get("output_contract") or {}
+        output_fields = ", ".join(
+            map(str, output_contract.get("fields") or ())
+        )
         subtask = (
-            f"Act as {role_name}. Review the task and any previous output, follow the "
-            "routing profile, and return a valid result under the role's output contract."
+            f"Act as {role_name}. Address the current dominant need"
+            + (f" ({dominant_need})" if dominant_need else "")
+            + ". Review the typed blackboard and prior handoff, then return a valid "
+            "result under the role's output contract"
+            + (f" with fields: {output_fields}." if output_fields else ".")
         )
         return PlannerAssignment(
             candidate_id=int(view["candidate_id"]),
@@ -338,12 +380,14 @@ class DecisionPlannerPolicy(Policy):
         self,
         option: RouteOption,
         signature: tuple[str, ...],
+        dominant_need: str = "",
     ) -> PlannerDecision:
         if option.stop:
             return PlannerDecision(True, signature, (), ())
         views = self.agent_graph.public_agent_views()
         assignments = tuple(
-            self._assignment(views[index]) for index in option.candidate_ids
+            self._assignment(views[index], dominant_need)
+            for index in option.candidate_ids
         )
         return PlannerDecision(False, signature, (), assignments)
 
@@ -352,8 +396,14 @@ class DecisionPlannerPolicy(Policy):
         global_info,
         signature: tuple[str, ...],
         candidate_views: list[dict],
+        dominant_need: str = "",
+        allow_stop: bool = True,
     ) -> PlannerDecision:
-        if global_info.path_id != -1 and self._previous_outputs(global_info):
+        if (
+            allow_stop
+            and global_info.path_id != -1
+            and self._previous_outputs(global_info)
+        ):
             return PlannerDecision(True, signature, ("decision model fallback",), ())
         for view in candidate_views:
             if view.get("available"):
@@ -361,7 +411,7 @@ class DecisionPlannerPolicy(Policy):
                     False,
                     signature,
                     ("decision model fallback",),
-                    (self._assignment(view),),
+                    (self._assignment(view, dominant_need),),
                 )
         if global_info.path_id != -1:
             return PlannerDecision(True, signature, ("no available candidate",), ())
@@ -375,6 +425,7 @@ class DecisionPlannerPolicy(Policy):
         candidate_views: list[dict],
         routing_state: Mapping[str, Any],
         semantic_diagnostics: Mapping[str, Any] | None = None,
+        dominant_need: str = "",
     ) -> tuple[PlannerDecision, list, list[dict], list[dict], str | None]:
         all_views = self.agent_graph.public_agent_views()
         views_by_id = {
@@ -456,7 +507,8 @@ class DecisionPlannerPolicy(Policy):
         if not selected_ids:
             raise RuntimeError("Sequential root selection produced no agent")
         assignments = tuple(
-            self._assignment(views_by_id[index]) for index in selected_ids
+            self._assignment(views_by_id[index], dominant_need)
+            for index in selected_ids
         )
         return (
             PlannerDecision(False, signature, (), assignments),
@@ -474,29 +526,7 @@ class DecisionPlannerPolicy(Policy):
         all_views = self.agent_graph.public_agent_views()
         routing_snapshot = self.routing_guard.evaluate(global_info, all_views)
         views = routing_snapshot.eligible_views(all_views)
-        sequential_root = root and self.root_selection_mode == "sequential"
-        require_candidate_before_stop = (
-            bool(routing_snapshot.state.get("enabled", False))
-            and str(routing_snapshot.state.get("profile", "")).startswith(
-                ("gaia_", "musique_")
-            )
-        )
-        stop_ready = bool(
-            routing_snapshot.state.get(
-                "final_answer_exists"
-                if str(routing_snapshot.state.get("profile", "")).startswith("musique_")
-                else "candidate_answer_exists",
-                False,
-            )
-        )
-        allow_stop = (
-            not root
-            and (
-                not require_candidate_before_stop
-                or stop_ready
-            )
-        )
-        guard_stop = not root and not views
+        base_guard_stop = not root and not views
         semantic_diagnostics: dict[str, Any] = {}
         diagnosis_judgment = None
         diagnosis_questions = None
@@ -504,7 +534,7 @@ class DecisionPlannerPolicy(Policy):
         diagnosis_error_type = None
         if (
             self.semantic_diagnosis_enabled
-            and not guard_stop
+            and not base_guard_stop
             and (not root or self.semantic_diagnosis_on_root)
         ):
             diagnosis_state = self._state(
@@ -524,6 +554,43 @@ class DecisionPlannerPolicy(Policy):
                 # Diagnosis is advisory. A malformed diagnosis must not prevent the
                 # router from making its ordinary typed route decision.
                 diagnosis_error_type = type(error).__name__
+        harness_result = self.routing_harness.apply(
+            task_type=global_info.task.get("type"),
+            root=root,
+            capacity=capacity,
+            views=all_views,
+            snapshot=routing_snapshot,
+            semantic_diagnostics=semantic_diagnostics,
+        )
+        routing_snapshot = harness_result.snapshot
+        views = routing_snapshot.eligible_views(all_views)
+        route_capacity = harness_result.route_capacity
+        branch_allowed = harness_result.branch_allowed
+        dominant_need = harness_result.dominant_need
+        sequential_root = root and self.root_selection_mode == "sequential"
+        require_candidate_before_stop = (
+            bool(routing_snapshot.state.get("enabled", False))
+            and str(routing_snapshot.state.get("profile", "")).startswith(
+                ("gaia_", "musique_")
+            )
+        )
+        if "terminal_ready" in routing_snapshot.state:
+            stop_ready = bool(routing_snapshot.state.get("terminal_ready"))
+        else:
+            stop_ready = bool(
+                routing_snapshot.state.get(
+                    "final_answer_exists"
+                    if str(routing_snapshot.state.get("profile", "")).startswith(
+                        "musique_"
+                    )
+                    else "candidate_answer_exists",
+                    False,
+                )
+            )
+        allow_stop = not root and (
+            not require_candidate_before_stop or stop_ready
+        )
+        guard_stop = not root and not views
         if guard_stop:
             decision = PlannerDecision(
                 True,
@@ -536,7 +603,7 @@ class DecisionPlannerPolicy(Policy):
             states = [
                 self._state(
                     global_info,
-                    capacity,
+                    route_capacity,
                     signature,
                     views,
                     routing_snapshot.state,
@@ -552,22 +619,31 @@ class DecisionPlannerPolicy(Policy):
                 error_type,
             ) = self._sequential_root_decision(
                 global_info,
-                capacity,
+                route_capacity,
                 signature,
                 views,
                 routing_snapshot.state,
                 semantic_diagnostics,
+                dominant_need,
             )
         else:
             options = (
-                self.bundle_builder.root_options(views, capacity)
+                self.bundle_builder.root_options(views, route_capacity)
                 if root
-                else self.bundle_builder.next_options(views, allow_stop=allow_stop)
+                else self.bundle_builder.next_options(
+                    views,
+                    allow_stop=allow_stop,
+                    capacity=route_capacity,
+                    allow_branch=branch_allowed,
+                    max_branch_options=self.routing_harness.max_branch_options,
+                )
             )
-            question_name, questions = self._question(root, options)
+            question_name, questions = self._question(
+                root, options, branch_allowed=branch_allowed
+            )
             state = self._state(
                 global_info,
-                capacity,
+                route_capacity,
                 signature,
                 views,
                 routing_snapshot.state,
@@ -586,10 +662,18 @@ class DecisionPlannerPolicy(Policy):
                     raise DecisionModelResponseError(
                         f"Unknown decision option {result.choice!r}"
                     )
-                decision = self._decision_from_option(by_id[result.choice], signature)
+                decision = self._decision_from_option(
+                    by_id[result.choice], signature, dominant_need
+                )
             except DecisionModelResponseError as error:
                 error_type = type(error).__name__
-                decision = self._fallback(global_info, signature, views)
+                decision = self._fallback(
+                    global_info,
+                    signature,
+                    views,
+                    dominant_need,
+                    allow_stop=allow_stop,
+                )
         result = results[-1] if results else None
         fallback = (not guard_stop) and (not results or error_type is not None)
         if decision.stop:
@@ -626,6 +710,12 @@ class DecisionPlannerPolicy(Policy):
             ),
             "calls": decision_calls,
             "guard_stop": guard_stop,
+            "routing_harness": {
+                "enabled": self.routing_harness.enabled,
+                "dominant_need": dominant_need,
+                "branch_allowed": branch_allowed,
+                "route_capacity": route_capacity,
+            },
         }
         if diagnosis_judgment is not None:
             metadata["semantic_diagnosis"] = {
@@ -666,6 +756,7 @@ class DecisionPlannerPolicy(Policy):
                 "task_signature": list(decision.task_signature),
                 "state_gaps": list(decision.state_gaps),
                 "capacity": capacity,
+                "route_capacity": route_capacity,
                 "allow_stop": allow_stop,
                 "remaining_depth": getattr(global_info, "remaining_depth", None),
                 "planner_tokens": planner_tokens,

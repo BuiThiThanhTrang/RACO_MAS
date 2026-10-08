@@ -127,8 +127,15 @@ class RouteBundleBuilder:
         return tuple(options)
 
     def next_options(
-        self, views: Iterable[Mapping[str, Any]], allow_stop: bool = True
+        self,
+        views: Iterable[Mapping[str, Any]],
+        allow_stop: bool = True,
+        *,
+        capacity: int = 1,
+        allow_branch: bool = False,
+        max_branch_options: int = 0,
     ) -> tuple[RouteOption, ...]:
+        available = self._available(views)
         options = []
         if allow_stop:
             options.append(
@@ -142,7 +149,7 @@ class RouteBundleBuilder:
                     stop=True,
                 )
             )
-        for view in self._available(views):
+        for view in available:
             candidate_id = int(view["candidate_id"])
             options.append(
                 RouteOption(
@@ -151,6 +158,27 @@ class RouteBundleBuilder:
                     description=_candidate_summary(view),
                 )
             )
+        if allow_branch and int(capacity) >= 2 and int(max_branch_options) > 0:
+            by_id = {int(view["candidate_id"]): view for view in available}
+            branch_count = 0
+            for candidate_ids in combinations(tuple(sorted(by_id)), 2):
+                summaries = [_candidate_summary(by_id[index]) for index in candidate_ids]
+                options.append(
+                    RouteOption(
+                        option_id="branch__" + "_".join(map(str, candidate_ids)),
+                        candidate_ids=tuple(candidate_ids),
+                        description=(
+                            "Continue the current path with the first role and fork one "
+                            "state-sharing recovery/check path with the second role: "
+                            + " | ".join(summaries)
+                            + ". Use only when the state contains conflict, failure, or "
+                            "measured no-progress that justifies the extra call."
+                        ),
+                    )
+                )
+                branch_count += 1
+                if branch_count >= int(max_branch_options):
+                    break
         if not options:
             raise ValueError("No next action can be constructed")
         if len(options) > self.max_options:

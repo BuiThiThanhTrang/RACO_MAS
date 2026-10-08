@@ -225,6 +225,28 @@ def load_experiment_config(
                 raise ValueError(
                     "routing_guard.answer_extraction.max_repair_attempts must be nonnegative"
                 )
+    routing_harness = policy_raw.get("routing_harness") or {}
+    if routing_harness.get("enabled", False):
+        shortlist = routing_harness.get("capability_shortlist") or {}
+        maximum = int(shortlist.get("max_candidates", 6))
+        minimum = int(shortlist.get("min_candidates", 2))
+        if minimum < 1 or maximum < minimum:
+            raise ValueError(
+                "policy.routing_harness capability shortlist limits are invalid"
+            )
+        branching = routing_harness.get("adaptive_branching") or {}
+        if int(branching.get("initial_paths", 1)) < 1:
+            raise ValueError(
+                "policy.routing_harness.adaptive_branching.initial_paths must be positive"
+            )
+        if int(branching.get("max_branch_options", 6)) < 0:
+            raise ValueError(
+                "policy.routing_harness.adaptive_branching.max_branch_options must be nonnegative"
+            )
+        if int(routing_harness.get("max_previous_outputs", 6)) < 1:
+            raise ValueError(
+                "policy.routing_harness.max_previous_outputs must be positive"
+            )
     routing = policy_raw.get("routing", {})
     routing_mode = routing.get("mode", "legacy_threshold")
     if routing_mode not in {

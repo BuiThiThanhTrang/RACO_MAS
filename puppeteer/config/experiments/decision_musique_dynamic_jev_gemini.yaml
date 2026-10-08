@@ -49,6 +49,22 @@ policy:
         - General Evidence Solver
         - Evidence Verifier
         - Answer Integrator
+  routing_harness:
+    enabled: true
+    typed_blackboard: true
+    dataset_scope_gate: true
+    max_previous_outputs: 5
+    capability_shortlist:
+      enabled: true
+      max_candidates: 5
+      min_candidates: 2
+    adaptive_branching:
+      enabled: true
+      initial_paths: 1
+      max_branch_options: 6
+    terminal_gate:
+      enabled: true
+      require_evidence_for_musique: true
   decision:
     provider: openrouter
     model: typesafe/jev-1.13
@@ -63,7 +79,7 @@ policy:
     audit_input: true
     semantic_diagnosis:
       enabled: true
-      include_root: false
+      include_root: true
 
 global_config:
   graph:

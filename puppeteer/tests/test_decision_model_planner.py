@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 
 from agent.agent_info.global_info import GlobalInfo
+from agent.agent_info.workflow import Action
 from agent.register.persona_loader import load_teammate_specs
 from agent.register.register import AgentRegister
 from config.runtime import load_experiment_config
@@ -40,6 +41,9 @@ PUPPETEER_BASELINE_NO_TRAIN_POOL = (
     / "personas"
     / "role_aware"
     / "puppeteer_baseline_roles_no_train_pool.jsonl"
+)
+MUSIQUE_POOL = (
+    PROJECT_DIR / "personas" / "role_aware" / "musique_gemini25_flash_pool.jsonl"
 )
 
 
@@ -208,6 +212,91 @@ class DecisionPlannerTests(unittest.TestCase):
             ],
         )
         self.assertEqual(len(client.calls), 3)
+
+    def test_adaptive_harness_starts_with_one_root_path(self):
+        graph, registry = self._graph(MUSIQUE_POOL)
+        client = FakeDecisionClient(["candidate__0"])
+        policy = DecisionPlannerPolicy(
+            graph,
+            ActionGraph(allowed_tools=()),
+            {
+                "routing_guard": {
+                    "enabled": True,
+                    "profile": "musique_dynamic_v2",
+                },
+                "routing_harness": {
+                    "enabled": True,
+                    "capability_shortlist": {"enabled": False},
+                    "adaptive_branching": {
+                        "enabled": True,
+                        "initial_paths": 1,
+                    },
+                },
+                "decision": {
+                    "provider": "systemone",
+                    "model": "test-model",
+                    "base_url": "http://unused.invalid",
+                    "max_options": 255,
+                    "root_selection_mode": "sequential",
+                },
+            },
+            {},
+            decision_client=client,
+        )
+        info = GlobalInfo(-1, ".", {"type": "MuSiQue", "Question": "Question"})
+        info.path_uid = "root"
+
+        proposal = policy.propose(info, 3)
+
+        self.assertEqual(proposal["actions"], [registry.agent_config[0].teammate_id])
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(
+            proposal["decision_model"]["routing_harness"]["route_capacity"], 1
+        )
+
+    def test_invalid_route_response_does_not_bypass_terminal_gate(self):
+        graph, _ = self._graph(MUSIQUE_POOL)
+        policy = DecisionPlannerPolicy(
+            graph,
+            ActionGraph(allowed_tools=()),
+            {
+                "routing_guard": {
+                    "enabled": True,
+                    "profile": "musique_dynamic_v2",
+                },
+                "routing_harness": {
+                    "enabled": True,
+                    "capability_shortlist": {"enabled": False},
+                    "terminal_gate": {
+                        "enabled": True,
+                        "require_evidence_for_musique": True,
+                    },
+                },
+                "decision": {
+                    "provider": "systemone",
+                    "model": "test-model",
+                    "base_url": "http://unused.invalid",
+                },
+            },
+            {},
+            decision_client=FakeDecisionClient(["not_an_option"]),
+        )
+        info = GlobalInfo(0, ".", {"type": "MuSiQue", "Question": "Question"})
+        info.path_uid = "path-test"
+        info.workflow.add_action(
+            Action(
+                {"action": "planning", "parameter": ""},
+                {"step_data": "Plan the unresolved question without an answer."},
+                "Success",
+                "Task Decomposer",
+                "gemini-2.5-flash",
+            )
+        )
+
+        proposal = policy.propose(info, 1)
+
+        self.assertNotEqual(proposal["actions"], [ORCHESTRATOR_STOP])
+        self.assertFalse(proposal["routing_state"]["terminal_ready"])
 
     def test_decision_planner_accepts_heterogeneous_actor_pool(self):
         specs = validate_decision_planner_pool(
