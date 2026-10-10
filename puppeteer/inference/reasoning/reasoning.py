@@ -134,6 +134,12 @@ class GraphReasoning:
         return self.answers
 
     def aggregate_answers(self, global_info, answers:list, query_func=None) -> str:
+        if self.task.get("type") in {"MMLU", "MMLU-Pro"}:
+            answers = [
+                answer
+                for answer in answers
+                if BenchmarkEvaluator.extract_choice_answer(answer)
+            ]
         if len(answers) == 0:
             main_logger.warning(
                 "[Aggregation] No formatted answer candidates were produced"
@@ -263,7 +269,10 @@ class GraphReasoning:
                 }
                 main_logger.info(metrics)
                 self.policy.finalize_task(transition, reasoning_path.global_info)
-            if aggregated_answer is not None:
+            if aggregated_answer is not None and (
+                self.task.get("type") not in {"MMLU", "MMLU-Pro"}
+                or BenchmarkEvaluator.extract_choice_answer(aggregated_answer)
+            ):
                 self.answers.append(aggregated_answer)
                 main_logger.info("[Aggregated Answer From Path {}]: {}".format(idx, aggregated_answer))   
         self.policy.update()

@@ -8,6 +8,21 @@ from tqdm import tqdm
 from tasks.splits import load_split_frame
 
 
+def require_mmlu_choice(evaluator, response, task_id):
+    """Normalize an answer and prevent invalid predictions from being persisted."""
+    choice = evaluator.extract_choice_answer(response)
+    if (
+        not isinstance(choice, str)
+        or len(choice) != 1
+        or choice not in string.ascii_uppercase[:10]
+    ):
+        raise RuntimeError(
+            "MMLU-Pro produced no valid A-J answer for question "
+            f"{task_id!r}; result and checkpoint were not written"
+        )
+    return choice
+
+
 def load_dataset(mode, data_limit=None, seed=42, data_start=0):
     if data_start < 0:
         raise ValueError("data_start must be non-negative")
@@ -134,7 +149,12 @@ def run(
     with open(result_path, file_mode, encoding="utf-8") as fd:
         for row_offset, (_, row) in enumerate(dataset.iterrows(), start=1):
             task = format_question(row)
-            final_ans = runner.run_reasoning(task)
+            raw_final_ans = runner.run_reasoning(task)
+            final_ans = require_mmlu_choice(
+                evaluator,
+                raw_final_ans,
+                task["id"],
+            )
             flag = evaluator.check_mmlu(final_ans, task["Answer"])
             if flag:
                 acc += 1

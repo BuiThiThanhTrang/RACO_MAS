@@ -298,34 +298,26 @@ class BenchmarkEvaluator:
     
     @staticmethod
     def extract_choice_answer(text):
-        if text is None:
-            return text
-        # First pattern: 'answer is X' 
-        pattern = r'answer is\s+([A-Z])'
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip()
-        
-        # Second pattern: 'is X'
-        pattern = r'is\s+([A-Z])'
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip()
-        
-        # Third pattern: '(X)' or 'The answer is (X)'
-        pattern = r'\(([A-Z])\)'
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip()
-        
-        # Fourth pattern: 'X'
-        if len(text) == 1:
-            pattern = r'[A-Z]'
-            match = re.search(pattern, text)
-            if match:
-                return match.group(0).strip()
+        """Return one deliberate MMLU option (A-J), or an empty string."""
+        if not isinstance(text, str):
+            return ""
 
-        return text.strip()
+        patterns = (
+            r"FINAL\s+ANSWER\s*:\s*\[?\s*([A-J])\b",
+            r"(?:answer\s+is|option|choice)\s*[:\-]?\s*\(?([A-J])\)?\b",
+            r"\(([A-J])\)",
+        )
+        for pattern in patterns:
+            matches = re.findall(pattern, text, flags=re.IGNORECASE)
+            if matches:
+                return matches[-1].upper()
+
+        standalone = re.findall(
+            r"^\s*\[?\s*([A-J])\s*\]?[.!]?\s*$",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        return standalone[-1].upper() if standalone else ""
     
     @staticmethod
     def normalize_string(s):
@@ -345,5 +337,5 @@ class BenchmarkEvaluator:
             pattern = r'\((\w)\)'
             match = re.search(pattern, text)
             if match:
-                return match.group(1).strip()  
-            return text.strip()  
+                return match.group(1).strip()
+            return text.strip()

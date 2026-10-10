@@ -1,8 +1,12 @@
 """Regression tests for malformed or overlong agent responses."""
 
 import ast
+import json
+import os
 import re
 from pathlib import Path
+import string
+import tempfile
 from types import SimpleNamespace
 import unittest
 
@@ -135,11 +139,97 @@ class ReasoningResilienceTests(unittest.TestCase):
         self.assertEqual(majority_vote(reasoning, ["", "", "I", "B"]), "B")
         self.assertEqual(majority_vote(reasoning, ["", ""]), "")
 
+    def test_choice_evaluator_rejects_arbitrary_or_empty_text(self):
+        extract = isolated_function(
+            "puppeteer/tasks/evaluator.py",
+            "extract_choice_answer",
+            {"re": re},
+            class_name="BenchmarkEvaluator",
+        )
+
+        self.assertEqual(extract("FINAL ANSWER: [i]"), "I")
+        self.assertEqual(extract("I\n\nHowever, I will re-check."), "I")
+        self.assertEqual(extract("The best option is (C)."), "C")
+        self.assertEqual(extract(""), "")
+        self.assertEqual(extract("Discussing variables A and B"), "")
+
+    def test_mmlu_writer_refuses_an_empty_prediction(self):
+        require_choice = isolated_function(
+            "puppeteer/tasks/mmlu_pro.py",
+            "require_mmlu_choice",
+            {"string": __import__("string")},
+        )
+        evaluator = SimpleNamespace(
+            extract_choice_answer=lambda response: response.strip().upper()
+        )
+
+        self.assertEqual(require_choice(evaluator, " i ", 123), "I")
+        with self.assertRaisesRegex(RuntimeError, "result and checkpoint were not written"):
+            require_choice(evaluator, "", 123)
+
+    def test_mmlu_run_does_not_persist_or_checkpoint_an_empty_prediction(self):
+        require_choice = isolated_function(
+            "puppeteer/tasks/mmlu_pro.py",
+            "require_mmlu_choice",
+            {"string": string},
+        )
+
+        class OneRowDataset:
+            def iterrows(self):
+                yield 0, {"question_id": 123}
+
+            def __len__(self):
+                return 1
+
+        run = isolated_function(
+            "puppeteer/tasks/mmlu_pro.py",
+            "run",
+            {
+                "json": json,
+                "os": os,
+                "load_dataset": lambda *args, **kwargs: OneRowDataset(),
+                "format_question": lambda row: {
+                    "id": row["question_id"],
+                    "Answer": "A",
+                },
+                "require_mmlu_choice": require_choice,
+            },
+        )
+        runner = SimpleNamespace(
+            run_reasoning=lambda task: "",
+            save_resume_checkpoint=lambda **kwargs: self.fail(
+                "an invalid result must not advance the checkpoint"
+            ),
+        )
+        evaluator = SimpleNamespace(
+            extract_choice_answer=lambda response: "",
+            check_mmlu=lambda prediction, answer: False,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "result and checkpoint were not written"):
+                run(
+                    runner=runner,
+                    evaluator=evaluator,
+                    results_dir=directory,
+                    mode="train",
+                    data_limit=1,
+                )
+
+            result = Path(directory) / "MMLU-Pro_train.jsonl"
+            self.assertTrue(result.exists())
+            self.assertEqual(result.read_text(encoding="utf-8"), "")
+
     def test_empty_candidate_list_does_not_call_aggregator_or_crash(self):
         aggregate = isolated_function(
             "puppeteer/inference/reasoning/reasoning.py",
             "aggregate_answers",
-            {"main_logger": SimpleNamespace(warning=lambda *args: None)},
+            {
+                "BenchmarkEvaluator": SimpleNamespace(
+                    extract_choice_answer=lambda answer: answer
+                ),
+                "main_logger": SimpleNamespace(warning=lambda *args: None),
+            },
             class_name="GraphReasoning",
         )
         reasoning = SimpleNamespace(task={"type": "MMLU-Pro"})
@@ -157,7 +247,12 @@ class ReasoningResilienceTests(unittest.TestCase):
         aggregate = isolated_function(
             "puppeteer/inference/reasoning/reasoning.py",
             "aggregate_answers",
-            {"main_logger": SimpleNamespace(info=lambda *args: None)},
+            {
+                "BenchmarkEvaluator": SimpleNamespace(
+                    extract_choice_answer=lambda answer: answer
+                ),
+                "main_logger": SimpleNamespace(info=lambda *args: None),
+            },
             class_name="GraphReasoning",
         )
         reasoning = SimpleNamespace(task={"type": "MMLU-Pro"})
