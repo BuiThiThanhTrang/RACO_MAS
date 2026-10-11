@@ -199,6 +199,43 @@ class DatasetSplitTests(unittest.TestCase):
         self.assertEqual(runner.saved, [(1, 5), (2, 1)])
 
 
+class PolicyRunModeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        namespace = {}
+        production_functions(
+            "puppeteer/main.py",
+            {"configure_policy_for_run"},
+            namespace,
+        )
+        cls.configure = staticmethod(namespace["configure_policy_for_run"])
+
+    @staticmethod
+    def config():
+        return {
+            "paths": {"model_path": "stale"},
+            "training": {"loading": True, "training": True},
+        }
+
+    def test_fresh_training_does_not_inherit_stale_policy(self):
+        config = self.configure(self.config(), "train", None)
+        self.assertTrue(config["training"]["training"])
+        self.assertFalse(config["training"]["loading"])
+        self.assertIsNone(config["paths"]["model_path"])
+
+    def test_test_mode_loads_checkpoint_without_training(self):
+        checkpoint = Path("trained-policy.pt")
+        config = self.configure(self.config(), "test", checkpoint)
+        self.assertFalse(config["training"]["training"])
+        self.assertTrue(config["training"]["loading"])
+        self.assertEqual(config["paths"]["model_path"], str(checkpoint))
+
+    def test_evaluation_requires_explicit_checkpoint(self):
+        for mode in ("validation", "test"):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                self.configure(self.config(), mode, None)
+
+
 def production_functions(path, names, namespace, class_name=None):
     """Load production functions without initializing unrelated API/model clients."""
     tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))

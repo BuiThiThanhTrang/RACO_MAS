@@ -19,8 +19,8 @@ $ErrorActionPreference = "Stop"
 
 # Hold a process-wide Windows mutex for the entire run. Two fresh processes
 # writing the same JSONL/checkpoint paths can silently interleave or overwrite
-# each other, so fail before preflight if this baseline is already active.
-$baselineMutexName = "Local\RACO_MAS_MMLU_Pro_Heterogeneous_Baseline"
+# each other, so fail before preflight if any train/test run is already active.
+$baselineMutexName = "Local\RACO_MAS_MMLU_Pro_Heterogeneous_Run"
 $baselineMutexCreated = $false
 $baselineMutex = [System.Threading.Mutex]::new(
     $true,
@@ -29,7 +29,7 @@ $baselineMutex = [System.Threading.Mutex]::new(
 )
 if (-not $baselineMutexCreated) {
     $baselineMutex.Dispose()
-    throw "Another MMLU-Pro heterogeneous baseline is already running. Stop it before starting a new run."
+    throw "Another MMLU-Pro heterogeneous train/test run is already running. Stop it before starting a new run."
 }
 
 try {

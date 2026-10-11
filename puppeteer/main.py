@@ -22,6 +22,22 @@ def seed_runtime(seed):
         torch.cuda.manual_seed_all(seed)
 
 
+def configure_policy_for_run(config, mode, checkpoint):
+    """Make train/evaluation behavior explicit instead of inheriting stale JSON."""
+    if mode != "train" and checkpoint is None:
+        raise ValueError(
+            f"{mode} mode requires --checkpoint so evaluation cannot use "
+            "an untrained or stale policy"
+        )
+
+    config["training"]["training"] = mode == "train"
+    config["training"]["loading"] = checkpoint is not None
+    config["paths"]["model_path"] = (
+        str(checkpoint) if checkpoint is not None else None
+    )
+    return config
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run benchmark tasks")
     parser.add_argument("task", choices=["MMLU-Pro", "gsm-hard", "SRDD", "CW"])
@@ -46,7 +62,7 @@ def main():
         "--checkpoint",
         type=str,
         default=None,
-        help="Load policy and optimizer state from this checkpoint before training",
+        help="Load policy and optimizer state from this checkpoint before the run",
     )
     parser.add_argument(
         "--checkpoint_every",
@@ -95,16 +111,10 @@ def main():
     config["dataset_name"] = args.task
     config["dataset_mode"] = args.mode
     config["paths"]["checkpoint_path"] = f"checkpoint/{args.task}_{args.mode}"
-    if checkpoint is not None:
-        config["paths"]["model_path"] = str(checkpoint)
-        config["training"]["loading"] = True
-        config["training"]["training"] = True
-    else:
-        # A fresh run must never inherit a stale checkpoint path or evaluation
-        # mode from a previous command.
-        config["paths"]["model_path"] = None
-        config["training"]["loading"] = False
-        config["training"]["training"] = True
+    try:
+        configure_policy_for_run(config, args.mode, checkpoint)
+    except ValueError as error:
+        parser.error(str(error))
     with open(config_path, "w", encoding="utf-8") as destination:
         json.dump(config, destination, indent=4)
 

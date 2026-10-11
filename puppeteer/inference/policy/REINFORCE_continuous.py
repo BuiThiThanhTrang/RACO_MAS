@@ -3,6 +3,7 @@ import atexit
 import os
 import datetime
 import json
+import random
 import numpy as np
 import torch.nn as nn
 import yaml
@@ -75,12 +76,19 @@ class ContinuousREINFORCE(LearningPolicy):
         self.state_representation = RewardModelTokenRepresentation(device=self.device)
         self.policy_network = MLP_PolicyNetwork(self.state_representation.dim, self.actions_dim) 
         self.policy_network = self.policy_network.to(self.device) 
-        if not self.training:
-            self.load_model(self.get_latest_model_path())
-        if self.loading and not self.load_model(self.model_path):
-            raise RuntimeError(
-                f"Failed to load requested training checkpoint: {self.model_path}"
-            )
+
+        # Initialize the optimizer before loading so training resumes can
+        # restore optimizer state. Evaluation also creates it because the
+        # checkpoint schema is shared, but update() never steps it.
+        self.optimizer = torch.optim.Adam(self.policy_network.parameters(), lr=self.learning_rate)
+        if self.loading:
+            if not self.model_path or not self.load_model(self.model_path):
+                raise RuntimeError(
+                    f"Failed to load requested policy checkpoint: {self.model_path}"
+                )
+        elif not self.training:
+            raise RuntimeError("Evaluation requires an explicit policy checkpoint")
+        self.policy_network.train(self.training)
 
         # Agent setup
         self.agent_hash_list = agent_graph.hash_nodes
@@ -116,12 +124,13 @@ class ContinuousREINFORCE(LearningPolicy):
         self.global_step = 0    
         self.prob_step=0
         
-        # Initialize optimizer
-        self.optimizer = torch.optim.Adam(self.policy_network.parameters(), lr=self.learning_rate)
         self.max_step_num = global_config.get("graph").get("max_step_num")
         self.llm_policy = LLMPolicy(self.agent_graph, self.action_graph)
         
-        atexit.register(self.save_model)
+        # Evaluation checkpoints are written explicitly for resume. Do not
+        # create timestamped policy files at interpreter exit during test.
+        if self.training:
+            atexit.register(self.save_model)
 
     def logarithmic_cost(self, step):
         """Calculate logarithmic cost using config parameters"""
@@ -186,9 +195,15 @@ class ContinuousREINFORCE(LearningPolicy):
             'output_dim': self.policy_network.output_dim,
             'timestamp': timestamp,
             'config': self.config,
+            'rng_state': {
+                'python': random.getstate(),
+                'numpy': np.random.get_state(),
+                'torch': torch.get_rng_state(),
+                'cuda': torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            },
             'metadata': {
                 'tag': f'completed_{completed_rows}',
-                'version': '1.1',
+                'version': '1.2',
                 'kind': 'resume',
                 'completed_rows': completed_rows,
                 'result_last_id': result_last_id,
@@ -228,7 +243,11 @@ class ContinuousREINFORCE(LearningPolicy):
         self.update_executed_trajectories()
         
         state, rew = self.get_state_representation(global_info)  
-        action_probs = self.policy_network(state) #shape (1,action_dim)
+        if getattr(self, "training", True):
+            action_probs = self.policy_network(state)
+        else:
+            with torch.no_grad():
+                action_probs = self.policy_network(state)
 
         # A termination action is only meaningful after a reasoning agent has
         # produced at least one candidate answer. Mask it at initialization so
@@ -274,7 +293,11 @@ class ContinuousREINFORCE(LearningPolicy):
         logger.info("Prior action probs: {}".format(prior_action_probs))
 
         state, rew = self.get_state_representation(global_info)  
-        action_probs = self.policy_network(state) #shape (1,action_dim)
+        if getattr(self, "training", True):
+            action_probs = self.policy_network(state)
+        else:
+            with torch.no_grad():
+                action_probs = self.policy_network(state)
         
         if self.llm_prior_redistribution:
             action_probs = (1 - self.redistribution_weight) * action_probs + \
@@ -370,6 +393,9 @@ class ContinuousREINFORCE(LearningPolicy):
             self.executed_trajectories = []
             self.entropy_history = []
             self.execution_count = 0
+            self.reward_from_rm = []
+            self.action_probs_history = []
+            self.llm_action_probs_history = []
             return {}
         if len(self.executed_trajectories) >= self.sample_size:
             episode_returns = []
@@ -508,7 +534,11 @@ class ContinuousREINFORCE(LearningPolicy):
         idx = transition.get('path_id', 0)
         if self.current_trajectories and idx < len(self.current_trajectories):
             state, rew = self.get_state_representation(global_info)
-            action_probs = self.policy_network(state)
+            if getattr(self, "training", True):
+                action_probs = self.policy_network(state)
+            else:
+                with torch.no_grad():
+                    action_probs = self.policy_network(state)
             prob_value = action_probs[0, self.end_action.item()]
             m = torch.distributions.Categorical(action_probs)
             current_trajectory = self.current_trajectories[idx]
@@ -580,7 +610,11 @@ class ContinuousREINFORCE(LearningPolicy):
                 logger.error(f"Model file not found: {path}")
                 return False
             
-            checkpoint = torch.load(path, map_location=self.device)
+            checkpoint = torch.load(
+                path,
+                map_location=self.device,
+                weights_only=False,
+            )
             
             # Validate model architecture
             if (checkpoint['input_dim'] != self.policy_network.input_dim or 
@@ -609,6 +643,20 @@ class ContinuousREINFORCE(LearningPolicy):
                 # Merge loaded config with current config, prioritizing current config
                 self.config.update({k: v for k, v in checkpoint['config'].items() 
                                   if k not in self.config})
+
+            # Resume checkpoints preserve local routing randomness. Older and
+            # immutable final-policy checkpoints intentionally omit this field.
+            rng_state = checkpoint.get('rng_state') or {}
+            if rng_state.get('python') is not None:
+                random.setstate(rng_state['python'])
+            if rng_state.get('numpy') is not None:
+                np.random.set_state(rng_state['numpy'])
+            if rng_state.get('torch') is not None:
+                torch.set_rng_state(rng_state['torch'].cpu())
+            if rng_state.get('cuda') is not None and torch.cuda.is_available():
+                torch.cuda.set_rng_state_all(
+                    [state.cpu() for state in rng_state['cuda']]
+                )
 
             self.loaded_checkpoint_metadata = checkpoint.get('metadata') or {}
             
