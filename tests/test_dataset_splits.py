@@ -170,7 +170,10 @@ class DatasetSplitTests(unittest.TestCase):
                 self.saved.append((completed_rows, result_last_id))
 
         runner = Runner()
-        evaluator = SimpleNamespace(check_mmlu=lambda prediction, answer: prediction == answer)
+        evaluator = SimpleNamespace(
+            extract_choice_answer=lambda response: response,
+            check_mmlu=lambda prediction, answer: prediction == answer,
+        )
         with tempfile.TemporaryDirectory() as folder, patch.object(
             mmlu_pro,
             "load_dataset",

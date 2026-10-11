@@ -4,10 +4,10 @@
     },
     "paths": {
         "checkpoint_path": "checkpoint/MMLU-Pro_train",
-        "model_path": null
+        "model_path": "C:\\Users\\tncn2\\Documents\\KLTN\\RACO_MAS\\puppeteer\\checkpoint\\MMLU-Pro_train\\resume_latest.pt"
     },
     "training": {
-        "loading": false,
+        "loading": true,
         "training": true,
         "learning_rate": 0.0001,
         "sample_size": 1,

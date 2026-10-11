@@ -39,6 +39,61 @@ def isolated_function(relative_path, function_name, namespace, class_name=None):
 
 
 class ReasoningResilienceTests(unittest.TestCase):
+    def test_initial_policy_masks_terminator_and_renormalizes(self):
+        import torch
+
+        init_forward = isolated_function(
+            "puppeteer/inference/policy/REINFORCE_continuous.py",
+            "init_forward",
+            {
+                "torch": torch,
+                "logger": SimpleNamespace(info=lambda *args: None),
+            },
+            class_name="ContinuousREINFORCE",
+        )
+        captured = {}
+
+        def select_agents(probabilities):
+            captured["probabilities"] = probabilities.detach().clone()
+            return torch.tensor([[0]])
+
+        policy = SimpleNamespace(
+            current_task=None,
+            update_executed_trajectories=lambda: None,
+            get_state_representation=lambda global_info: (
+                torch.tensor([[1.0]]),
+                0.0,
+            ),
+            policy_network=lambda state: torch.tensor(
+                [[0.2, 0.3, 0.5]], requires_grad=True
+            ),
+            end_action=torch.tensor(2),
+            action_probs_history=[],
+            reward_from_rm=[],
+            entropy_history=[],
+            select_agents_by_threshold=select_agents,
+            current_trajectories=[],
+            current_trajectory_idx=0,
+            append_to_trajectory=lambda *args: None,
+        )
+
+        selected = init_forward(
+            policy,
+            SimpleNamespace(task={"type": "MMLU-Pro"}),
+        )
+
+        self.assertEqual(selected.tolist(), [0])
+        self.assertAlmostEqual(
+            captured["probabilities"][0, 0].item(), 0.4, places=6
+        )
+        self.assertAlmostEqual(
+            captured["probabilities"][0, 1].item(), 0.6, places=6
+        )
+        self.assertEqual(captured["probabilities"][0, 2].item(), 0.0)
+        self.assertAlmostEqual(
+            captured["probabilities"].sum().item(), 1.0, places=6
+        )
+
     def test_chat_request_forwards_qwen_chat_template_options(self):
         request = isolated_function(
             "puppeteer/model/model_utils.py",
@@ -105,6 +160,25 @@ class ReasoningResilienceTests(unittest.TestCase):
         self.assertEqual(
             agent.dialog_history[-1],
             {"role": "assistant", "content": "FINAL ANSWER: I"},
+        )
+
+    def test_query_rejects_an_empty_provider_response(self):
+        query = isolated_function(
+            "puppeteer/agent/reasoning_agent.py",
+            "_query",
+            {},
+            class_name="Reasoning_Agent",
+        )
+        agent = SimpleNamespace(
+            dialog_history=[{"role": "system", "content": "system"}],
+            query_func=lambda messages, max_tokens=None: ("   ", 17),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "empty response"):
+            query(agent, "solve", max_tokens=256)
+        self.assertEqual(
+            agent.dialog_history[-1],
+            {"role": "user", "content": "solve"},
         )
 
     def test_mmlu_choice_parser_accepts_supported_formats_only(self):
@@ -265,6 +339,62 @@ class ReasoningResilienceTests(unittest.TestCase):
         )
 
         self.assertEqual(result, "I")
+
+    def test_multiple_mmlu_candidates_use_direct_majority_vote(self):
+        aggregate = isolated_function(
+            "puppeteer/inference/reasoning/reasoning.py",
+            "aggregate_answers",
+            {
+                "BenchmarkEvaluator": SimpleNamespace(
+                    extract_choice_answer=lambda answer: answer
+                ),
+                "main_logger": SimpleNamespace(
+                    info=lambda *args: None,
+                    warning=lambda *args: None,
+                ),
+            },
+            class_name="GraphReasoning",
+        )
+        reasoning = SimpleNamespace(task={"type": "MMLU-Pro"})
+
+        result = aggregate(
+            reasoning,
+            global_info=SimpleNamespace(),
+            answers=["A", "A"],
+            query_func=lambda **kwargs: self.fail(
+                "MMLU aggregation should not call a provider"
+            ),
+        )
+
+        self.assertEqual(result, "A")
+
+    def test_mmlu_majority_vote_prefers_later_candidate_on_tie(self):
+        aggregate = isolated_function(
+            "puppeteer/inference/reasoning/reasoning.py",
+            "aggregate_answers",
+            {
+                "BenchmarkEvaluator": SimpleNamespace(
+                    extract_choice_answer=lambda answer: answer
+                ),
+                "main_logger": SimpleNamespace(
+                    info=lambda *args: None,
+                    warning=lambda *args: None,
+                ),
+            },
+            class_name="GraphReasoning",
+        )
+        reasoning = SimpleNamespace(task={"type": "MMLU-Pro"})
+
+        result = aggregate(
+            reasoning,
+            global_info=SimpleNamespace(),
+            answers=["I", "B"],
+            query_func=lambda **kwargs: self.fail(
+                "MMLU aggregation should not call a provider"
+            ),
+        )
+
+        self.assertEqual(result, "B")
 
 
 if __name__ == "__main__":

@@ -364,12 +364,11 @@ class Reasoning_Agent(Agent):
                 logger.info("[Final Answer]: " + answer)
                 global_info.add_answer(answer)
                 return answer, total_tokens
-            logger.info(
-                "[Error] No MMLU choice found in the formatting response: {}\n".format(
+            raise ValueError(
+                "No MMLU choice found in the formatting response: {}".format(
                     raw_response
                 )
             )
-            return "", total_tokens
         else:
             regex_answer = r"FINAL ANSWER: ([\s\S]*)"
             matches = re.findall(regex_answer, raw_response)
@@ -394,6 +393,10 @@ class Reasoning_Agent(Agent):
             messages, max_tokens=max_tokens
         )
         response = "" if response is None else str(response)
+        if not response.strip():
+            raise RuntimeError(
+                "Model provider returned an empty response; retrying request"
+            )
         message = {"role": "assistant", "content": response}
         self.dialog_history.append(dict(message))
         return response, total_tokens

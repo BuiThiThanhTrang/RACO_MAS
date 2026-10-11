@@ -230,6 +230,14 @@ class ContinuousREINFORCE(LearningPolicy):
         state, rew = self.get_state_representation(global_info)  
         action_probs = self.policy_network(state) #shape (1,action_dim)
 
+        # A termination action is only meaningful after a reasoning agent has
+        # produced at least one candidate answer. Mask it at initialization so
+        # a newly started path cannot terminate with an empty MMLU prediction.
+        initial_action_mask = torch.ones_like(action_probs)
+        initial_action_mask[:, self.end_action.item()] = 0
+        action_probs = action_probs * initial_action_mask
+        action_probs = action_probs / action_probs.sum(dim=1, keepdim=True)
+
         self.action_probs_history.append(action_probs.T.squeeze(1))
         self.reward_from_rm.append(rew)
         logger.info("Action probs: {}".format(action_probs))

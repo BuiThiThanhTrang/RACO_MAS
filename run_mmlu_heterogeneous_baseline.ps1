@@ -17,6 +17,23 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Hold a process-wide Windows mutex for the entire run. Two fresh processes
+# writing the same JSONL/checkpoint paths can silently interleave or overwrite
+# each other, so fail before preflight if this baseline is already active.
+$baselineMutexName = "Local\RACO_MAS_MMLU_Pro_Heterogeneous_Baseline"
+$baselineMutexCreated = $false
+$baselineMutex = [System.Threading.Mutex]::new(
+    $true,
+    $baselineMutexName,
+    [ref]$baselineMutexCreated
+)
+if (-not $baselineMutexCreated) {
+    $baselineMutex.Dispose()
+    throw "Another MMLU-Pro heterogeneous baseline is already running. Stop it before starting a new run."
+}
+
+try {
+
 $repoRoot = $PSScriptRoot
 $python = Join-Path $repoRoot ".venv311\Scripts\python.exe"
 $puppeteerRoot = Join-Path $repoRoot "puppeteer"
@@ -60,6 +77,21 @@ if (-not $env:REWARD_MODEL_URL.StartsWith("https://")) {
 
 Write-Host "Python: $pythonVersion"
 Write-Host "Environment variables: present"
+
+Write-Host "Running local regression checks..."
+Push-Location $repoRoot
+try {
+    & $python -X utf8 -m unittest `
+        tests.test_reasoning_resilience `
+        tests.test_dataset_splits `
+        tests.test_persona_tools
+    if ($LASTEXITCODE -ne 0) {
+        throw "Regression checks failed with exit code $LASTEXITCODE"
+    }
+}
+finally {
+    Pop-Location
+}
 
 if (-not $SkipRewardSmoke) {
     Write-Host "Checking the Modal reward endpoint..."
@@ -174,10 +206,42 @@ try {
         throw "Baseline failed with exit code $benchmarkExitCode"
     }
 
+    $completedRecords = @(
+        Get-Content -LiteralPath $resultPath |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_ | ConvertFrom-Json }
+    )
+    $invalidRecords = @(
+        $completedRecords | Where-Object {
+            ([string]$_.pred).Trim() -notmatch '^[A-J]$'
+        }
+    )
+    $uniqueIds = @($completedRecords.id | Sort-Object -Unique).Count
+    if ($completedRecords.Count -ne $DataLimit) {
+        throw "Result verification failed: expected $DataLimit rows, found $($completedRecords.Count)"
+    }
+    if ($uniqueIds -ne $DataLimit) {
+        throw "Result verification failed: expected $DataLimit unique IDs, found $uniqueIds"
+    }
+    if ($invalidRecords.Count -gt 0) {
+        throw "Result verification failed: found $($invalidRecords.Count) invalid prediction(s)"
+    }
+    $correctCount = @($completedRecords | Where-Object { $_.correct -eq $true }).Count
+    $accuracy = [Math]::Round($correctCount / $DataLimit, 6)
+
     Write-Host "Baseline completed successfully."
+    Write-Host "Verified: $DataLimit rows, $uniqueIds unique IDs, 0 invalid predictions."
+    Write-Host "Accuracy: $correctCount/$DataLimit = $accuracy"
     Write-Host "Result: $resultPath"
     Write-Host "Resume checkpoint: $checkpointPath"
 }
 finally {
     Pop-Location
+}
+}
+finally {
+    if ($null -ne $baselineMutex) {
+        $baselineMutex.ReleaseMutex()
+        $baselineMutex.Dispose()
+    }
 }

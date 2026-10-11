@@ -136,7 +136,7 @@ class GraphReasoning:
     def aggregate_answers(self, global_info, answers:list, query_func=None) -> str:
         if self.task.get("type") in {"MMLU", "MMLU-Pro"}:
             answers = [
-                answer
+                BenchmarkEvaluator.extract_choice_answer(answer)
                 for answer in answers
                 if BenchmarkEvaluator.extract_choice_answer(answer)
             ]
@@ -145,12 +145,26 @@ class GraphReasoning:
                 "[Aggregation] No formatted answer candidates were produced"
             )
             return ""
-        if (
-            len(answers) == 1
-            and self.task.get("type") in {"MMLU", "MMLU-Pro"}
-        ):
-            main_logger.info("[Aggregation] Single candidate: {}".format(answers[0]))
-            return answers[0]
+        if self.task.get("type") in {"MMLU", "MMLU-Pro"}:
+            # The aggregation prompt asks the model to perform a majority vote
+            # and to prefer the later candidate on ties. Do that operation
+            # directly so a verbose or malformed aggregation response cannot
+            # discard otherwise valid A-J candidates.
+            answer_counts = {}
+            for answer in answers:
+                answer_counts[answer] = answer_counts.get(answer, 0) + 1
+            max_count = max(answer_counts.values())
+            most_common = [
+                answer
+                for answer in answers
+                if answer_counts[answer] == max_count
+            ]
+            selected_answer = most_common[-1]
+            main_logger.info(
+                "[Aggregation] Direct MMLU majority vote: candidates={}, "
+                "selected={}".format(answers, selected_answer)
+            )
+            return selected_answer
 
         # only choose the last result without any format or extract
         if query_func is None:

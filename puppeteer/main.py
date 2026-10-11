@@ -1,13 +1,25 @@
 import argparse
 import json
 import os
+import random
 from pathlib import Path
 
+import numpy as np
+import torch
 import yaml
 
 from tasks.runner import BenchmarkRunner
 from tasks.evaluator import BenchmarkEvaluator
 from tasks import mmlu_pro, gsm_hard, srdd, creative_writing
+
+
+def seed_runtime(seed):
+    """Seed the local policy/action RNGs for a repeatable fresh run."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 def main():
@@ -28,7 +40,7 @@ def main():
         "--seed",
         type=int,
         default=42,
-        help="Seed identifying the split manifest in data/splits (default: 42)",
+        help="Seed for the split manifest and local policy RNGs (default: 42)",
     )
     parser.add_argument(
         "--checkpoint",
@@ -62,8 +74,6 @@ def main():
         checkpoint = Path(args.checkpoint).resolve()
         if not checkpoint.is_file():
             parser.error(f"Checkpoint not found: {checkpoint}")
-        import torch
-
         checkpoint_data = torch.load(
             checkpoint,
             map_location="cpu",
@@ -90,10 +100,15 @@ def main():
         config["training"]["loading"] = True
         config["training"]["training"] = True
     else:
+        # A fresh run must never inherit a stale checkpoint path or evaluation
+        # mode from a previous command.
+        config["paths"]["model_path"] = None
         config["training"]["loading"] = False
+        config["training"]["training"] = True
     with open(config_path, "w", encoding="utf-8") as destination:
         json.dump(config, destination, indent=4)
 
+    seed_runtime(args.seed)
     runner = BenchmarkRunner(args.personas, global_config)
     evaluator = BenchmarkEvaluator()
 
