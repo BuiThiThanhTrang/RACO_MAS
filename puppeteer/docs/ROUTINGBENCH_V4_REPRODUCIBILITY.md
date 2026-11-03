@@ -29,6 +29,7 @@ The byte-identity boundary includes:
 
 - `routing_benchmark/routers.py`;
 - every Python module under `routing_benchmark/v4`;
+- the v2/v3 compatibility modules imported by the frozen v4 package loader;
 - `scripts/run_shared_environment.py` and
   `scripts/evaluate_shared_environment.py`;
 - the database, code-debugging, formal-proof and structured-data as-run

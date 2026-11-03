@@ -4,6 +4,10 @@
   "scope_note": "Frozen live routing, execution, adapter and as-run configuration files. Certification, CI, downloader, tests and documentation are intentionally outside this boundary.",
   "path_globs": [
     "routing_benchmark/*.py",
+    "routing_benchmark/v2/**/*.py",
+    "routing_benchmark/v3/__init__.py",
+    "routing_benchmark/v3/loader.py",
+    "routing_benchmark/v3/schemas.py",
     "routing_benchmark/v4/**/*.py",
     "inference/policy/decision_model_client.py",
     "scripts/run_shared_environment.py",
@@ -18,6 +22,6 @@
     "data/RoutingBench/v4_beta_4d_82_20261102/agent_pools/*.json"
   ],
   "exclude": [],
-  "file_count": 81,
-  "aggregate_sha256": "0ef11c806b04c1191764292a1273f77e335a0af995be8c1291a9f4e53ba477f1"
+  "file_count": 94,
+  "aggregate_sha256": "779cfc4d9e913c26b8145f7435a983cd200771465707f54360fdec15ece2f16e"
 }
