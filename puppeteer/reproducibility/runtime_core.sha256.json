@@ -1,0 +1,23 @@
+{
+  "schema_version": "routingbench-v4-runtime-hash-v1",
+  "algorithm": "sha256(relative_path + NUL + sha256(file_bytes) + LF)",
+  "scope_note": "Frozen live routing, execution, adapter and as-run configuration files. Certification, CI, downloader, tests and documentation are intentionally outside this boundary.",
+  "path_globs": [
+    "routing_benchmark/*.py",
+    "routing_benchmark/v4/**/*.py",
+    "inference/policy/decision_model_client.py",
+    "scripts/run_shared_environment.py",
+    "scripts/evaluate_shared_environment.py",
+    "config/shared_environment/code_jev_16k.yaml",
+    "config/shared_environment/code_roles.json",
+    "config/shared_environment/code_runtime_profiles.json",
+    "config/shared_environment/database_jev_16k.yaml",
+    "config/shared_environment/formal_jev_16k.yaml",
+    "config/shared_environment/formal_minif2f_20_jev_16k.yaml",
+    "config/shared_environment/structured_data_250_20_jev_qwen35_9b_16k.yaml",
+    "data/RoutingBench/v4_beta_4d_82_20261102/agent_pools/*.json"
+  ],
+  "exclude": [],
+  "file_count": 81,
+  "aggregate_sha256": "0ef11c806b04c1191764292a1273f77e335a0af995be8c1291a9f4e53ba477f1"
+}

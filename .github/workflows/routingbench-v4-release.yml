@@ -1,0 +1,70 @@
+name: RoutingBench V4 release gates
+
+on:
+  push:
+    paths:
+      - "puppeteer/routing_benchmark/**"
+      - "puppeteer/config/shared_environment/**"
+      - "puppeteer/scripts/run_shared_environment.py"
+      - "puppeteer/scripts/evaluate_shared_environment.py"
+      - "puppeteer/scripts/certify_routingbench_v4_release.py"
+      - "puppeteer/scripts/download_routingbench_v4.py"
+      - "puppeteer/tests/test_routingbench_v4_private_isolation.py"
+      - "puppeteer/reproducibility/**"
+      - "puppeteer/requirements-routingbench-v4-release.lock.txt"
+      - ".github/workflows/routingbench-v4-release.yml"
+  pull_request:
+    paths:
+      - "puppeteer/routing_benchmark/**"
+      - "puppeteer/config/shared_environment/**"
+      - "puppeteer/scripts/**shared_environment.py"
+      - "puppeteer/scripts/certify_routingbench_v4_release.py"
+      - "puppeteer/scripts/download_routingbench_v4.py"
+      - "puppeteer/tests/test_routingbench_v4_private_isolation.py"
+      - "puppeteer/reproducibility/**"
+      - "puppeteer/requirements-routingbench-v4-release.lock.txt"
+      - ".github/workflows/routingbench-v4-release.yml"
+  workflow_dispatch:
+
+jobs:
+  certify-release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: puppeteer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13.9"
+          cache: "pip"
+          cache-dependency-path: puppeteer/requirements-routingbench-v4-release.lock.txt
+
+      - name: Install the locked release environment
+        run: python -m pip install -r requirements-routingbench-v4-release.lock.txt
+
+      - name: Download the pinned dataset when it is not in the checkout
+        run: |
+          if (-not (Test-Path "data/RoutingBench/v4_beta_4d_82_20261102")) {
+            python scripts/download_routingbench_v4.py --output data/RoutingBench/v4_beta_4d_82_20261102
+          }
+
+      - name: Run private-isolation sentinel tests
+        run: python -m unittest tests.test_routingbench_v4_private_isolation -v
+
+      - name: Verify runtime bytes and all packet contexts
+        run: |
+          python scripts/certify_routingbench_v4_release.py `
+            --release-root data/RoutingBench/v4_beta_4d_82_20261102 `
+            --runtime-manifest reproducibility/runtime_core.sha256.json `
+            --report reproducibility/certification_report.json
+
+      - name: Upload certification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: routingbench-v4-certification
+          path: puppeteer/reproducibility/certification_report.json

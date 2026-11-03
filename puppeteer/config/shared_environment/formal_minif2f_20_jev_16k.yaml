@@ -1,0 +1,24 @@
+packet_root: data/RoutingBench/v4_minif2f_20_20261101
+output_root: runs
+domain: formal_proof
+lean_cache: ../.routingbench_lean_cache
+seed: 42
+max_calls: 8
+workers: 2
+router:
+  type: decision
+  provider: openrouter
+  model: typesafe/jev-1.13
+  api_key_env: OPENROUTER_API_KEY
+  orchestration_profile: structured
+  observable_rejection_guard_enabled: false
+  timeout_seconds: 30
+  max_retries: 5
+executor:
+  provider: huggingface
+  model: Goedel-LM/Goedel-Prover-V2-8B:featherless-ai
+  api_key_env: HF_TOKEN
+  max_tokens: 16384
+  timeout_seconds: 300
+  transport_retries: 5
+  max_tool_calls: 3

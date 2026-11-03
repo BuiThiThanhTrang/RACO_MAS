@@ -1,0 +1,15 @@
+# Preserve the mixed as-run bytes exactly instead of normalizing line endings.
+/puppeteer/routing_benchmark/**/*.py -text
+/puppeteer/routing_benchmark/v4/workflow_templates.json -text
+/puppeteer/inference/policy/decision_model_client.py -text
+/puppeteer/config/shared_environment/** -text
+/puppeteer/scripts/run_shared_environment.py -text
+/puppeteer/scripts/evaluate_shared_environment.py -text
+/puppeteer/scripts/certify_routingbench_v4_release.py text eol=lf
+/puppeteer/scripts/download_routingbench_v4.py text eol=lf
+/puppeteer/tests/test_routingbench_v4_private_isolation.py text eol=lf
+/puppeteer/reproducibility/** text eol=lf
+/puppeteer/requirements-routingbench-v4-release.lock.txt text eol=lf
+/.github/workflows/routingbench-v4-release.yml text eol=lf
+/LICENSE text eol=lf
+/NOTICE text eol=lf

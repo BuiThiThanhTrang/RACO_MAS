@@ -221,3 +221,11 @@ If you use Puppeteer in your work, please cite our NeurIPS 2025 paper:
   url={https://arxiv.org/abs/2505.19591}
 }
 ```
+
+# License
+
+Source code and project-authored documentation are licensed under the
+[Apache License 2.0](LICENSE). Dataset artifacts are licensed separately under
+their corresponding `LICENSE_DATA`, and bundled third-party materials retain
+the original licenses recorded in their manifests and provenance files. See
+[NOTICE](NOTICE) for attribution scope.

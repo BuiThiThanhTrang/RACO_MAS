@@ -1,0 +1,90 @@
+{
+  "code-bugsinpy-pysnooper-3": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-pysnooper-3\\Scripts\\python.exe"
+  },
+  "code-bugsinpy-cookiecutter-1": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-cookiecutter-1\\Scripts\\python.exe"
+  },
+  "code-bugsinpy-black-3": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-black-3\\Scripts\\python.exe"
+  },
+  "code-bugsinpy-scrapy-37": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-scrapy-37\\Scripts\\python.exe"
+  },
+  "code-bugsinpy-tqdm-8": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-tqdm-8\\Scripts\\python.exe"
+  },
+  "code-bugsinpy-youtube-dl-43": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-youtube-dl-43\\Scripts\\python.exe"
+  },
+  "code-swebench-django-16485": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-swebench-django-16485\\Scripts\\python.exe",
+    "test_command": [
+      "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-swebench-django-16485\\Scripts\\python.exe",
+      "tests/runtests.py",
+      "template_tests.filter_tests.test_floatformat.FunctionTests.test_zero_values",
+      "--verbosity",
+      "2"
+    ]
+  },
+  "code-swebench-sympy-14711": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-swebench-sympy-14711\\Scripts\\python.exe",
+    "test_command": [
+      "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-swebench-sympy-14711\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "sympy/physics/vector/tests/test_vector.py::test_Vector"
+    ]
+  },
+  "code-swebench-sphinx-9698": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-swebench-sphinx-9698\\Scripts\\python.exe",
+    "test_command": [
+      "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-swebench-sphinx-9698\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_domain_py.py::test_pymethod_options"
+    ]
+  },
+  "code-bugsinpy-fastapi-10": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-fastapi-10\\Scripts\\python.exe"
+  },
+  "code-bugsinpy-httpie-4": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-httpie-4\\Scripts\\python.exe"
+  },
+  "code-bugsinpy-thefuck-2": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-thefuck-2-py311\\Scripts\\python.exe"
+  },
+  "code-bugsinpy-tornado-9": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-bugsinpy-tornado-9\\Scripts\\python.exe"
+  },
+  "code-swebench-pylint-4970": {
+    "python_executable": "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-swebench-pylint-4970\\Scripts\\python.exe",
+    "test_command": [
+      "C:\\Users\\23521\\.codex\\worktrees\\4381\\RACO_MAS\\puppeteer\\.packet_work\\runtime_envs\\code-swebench-pylint-4970\\Scripts\\python.exe",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/checkers/unittest_similar.py::test_set_duplicate_lines_to_zero"
+    ]
+  },
+  "code-quixbugs-bucketsort": {
+    "repository_mirror": "D:\\SideProject\\RACO_MAS\\puppeteer\\.cache\\shared\\QuixBugs"
+  },
+  "code-quixbugs-flatten": {
+    "repository_mirror": "D:\\SideProject\\RACO_MAS\\puppeteer\\.cache\\shared\\QuixBugs"
+  },
+  "code-quixbugs-next-palindrome": {
+    "repository_mirror": "D:\\SideProject\\RACO_MAS\\puppeteer\\.cache\\shared\\QuixBugs"
+  },
+  "code-quixbugs-quicksort": {
+    "repository_mirror": "D:\\SideProject\\RACO_MAS\\puppeteer\\.cache\\shared\\QuixBugs"
+  },
+  "code-quixbugs-sieve": {
+    "repository_mirror": "D:\\SideProject\\RACO_MAS\\puppeteer\\.cache\\shared\\QuixBugs"
+  },
+  "code-quixbugs-to-base": {
+    "repository_mirror": "D:\\SideProject\\RACO_MAS\\puppeteer\\.cache\\shared\\QuixBugs"
+  }
+}

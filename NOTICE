@@ -1,0 +1,12 @@
+RACO_MAS and RoutingBench
+Copyright 2026 Bui Thi Thanh Trang
+
+This product includes work derived from or interoperating with third-party
+projects and benchmark sources. Their copyright notices and license terms are
+retained in the corresponding source trees, packet manifests, provenance
+records, and dataset artifacts.
+
+The Apache License 2.0 in LICENSE applies to source code and project-authored
+documentation in this repository. Dataset artifacts are governed separately by
+the dataset's LICENSE_DATA and by the original licenses recorded for bundled
+third-party materials.

@@ -1,0 +1,31 @@
+{
+  "schema_version": "routingbench-v4-release-certificate-v1",
+  "certification_is_out_of_band": true,
+  "runtime": {
+    "valid": true,
+    "file_count": 81,
+    "aggregate_sha256": "0ef11c806b04c1191764292a1273f77e335a0af995be8c1291a9f4e53ba477f1",
+    "errors": []
+  },
+  "packets": {
+    "valid": true,
+    "packet_count": 82,
+    "domain_counts": {
+      "code_debugging": 20,
+      "database_migration_integrity": 12,
+      "formal_proof": 30,
+      "structured_data_processing": 20
+    },
+    "model_contexts_checked": 732,
+    "errors": []
+  },
+  "runs": {
+    "valid": true,
+    "run_count": 8,
+    "unique_packet_count": 82,
+    "decision_state_count": 640,
+    "executor_request_count": 402,
+    "errors": []
+  },
+  "valid": true
+}

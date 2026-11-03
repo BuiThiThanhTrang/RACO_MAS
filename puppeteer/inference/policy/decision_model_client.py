@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 import logging
@@ -54,7 +55,12 @@ def _required_env(name: str) -> str:
 
 
 class SystemOneDecisionClient:
-    """HTTP client for OpenRouter Decisions and compatible System One APIs."""
+    """HTTP client for OpenAI Decisions and compatible System One APIs.
+
+    The project uses one provider-neutral question contract internally.  The
+    OpenAI provider is translated to the public ``POST /v1/decisions`` schema;
+    OpenRouter/Jev/Cloudflare keep their existing System One payloads.
+    """
 
     RETRYABLE_STATUS_CODES = {
         408,
@@ -72,9 +78,16 @@ class SystemOneDecisionClient:
     def __init__(self, config: Mapping[str, Any], http_client=None) -> None:
         self.config = dict(config or {})
         self.provider = str(self.config.get("provider", "jev")).strip().lower()
-        if self.provider not in {"openrouter", "jev", "cloudflare", "systemone"}:
+        if self.provider not in {
+            "openai",
+            "openrouter",
+            "jev",
+            "cloudflare",
+            "systemone",
+        }:
             raise ValueError(
-                "decision.provider must be openrouter, jev, cloudflare, or systemone"
+                "decision.provider must be openai, openrouter, jev, cloudflare, "
+                "or systemone"
             )
         self.model = str(self.config.get("model", "")).strip()
         if not self.model:
@@ -106,7 +119,10 @@ class SystemOneDecisionClient:
         api_key_env = str(self.config.get("api_key_env", "")).strip()
         api_key = _required_env(api_key_env) if api_key_env else None
 
-        if self.provider == "openrouter":
+        if self.provider == "openai":
+            endpoint = endpoint or "https://api.openai.com/v1/decisions"
+            api_key = api_key or _required_env("OPENAI_API_KEY")
+        elif self.provider == "openrouter":
             endpoint = endpoint or "https://openrouter.ai/api/alpha/decisions"
             api_key = api_key or _required_env("OPENROUTER_API_KEY")
         elif self.provider == "jev":
@@ -138,11 +154,134 @@ class SystemOneDecisionClient:
                 endpoint = f"{base_url}/v1/systemone"
         return endpoint, api_key
 
+    @staticmethod
+    def _openai_question(name: str, raw_question: Mapping[str, Any]) -> dict[str, Any]:
+        """Translate the project's typed question into OpenAI's Decisions schema."""
+
+        raw_type = str(raw_question.get("type", "")).strip().casefold()
+        question_type = "predicate" if raw_type == "noul" else raw_type
+        question: dict[str, Any] = {
+            "type": question_type,
+            "name": str(name),
+            "instructions": str(raw_question.get("instructions", "")).strip(),
+        }
+        criteria = raw_question.get("criteria")
+        if question_type == "choice":
+            if not isinstance(criteria, Mapping) or not criteria:
+                raise DecisionModelResponseError(
+                    f"OpenAI choice question {name!r} requires non-empty criteria"
+                )
+            question["choices"] = [
+                {"value": str(value), "description": str(description)}
+                for value, description in criteria.items()
+            ]
+        elif question_type == "score":
+            if not isinstance(criteria, (list, tuple)) or not criteria:
+                raise DecisionModelResponseError(
+                    f"OpenAI score question {name!r} requires ordered criteria"
+                )
+            question["levels"] = [
+                {"label": str(level), "description": str(level)}
+                for level in criteria
+            ]
+        elif question_type != "predicate":
+            raise DecisionModelResponseError(
+                f"Unsupported OpenAI decision question type {raw_type!r}"
+            )
+        return question
+
+    def _openai_request(
+        self,
+        state: Mapping[str, Any],
+        questions: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        request: dict[str, Any] = {
+            "model": self.model,
+            "input": json.dumps(
+                dict(state), ensure_ascii=False, sort_keys=True, default=str
+            ),
+            "questions": [
+                self._openai_question(str(name), raw_question)
+                for name, raw_question in questions.items()
+                if isinstance(raw_question, Mapping)
+            ],
+        }
+        if len(request["questions"]) != len(questions):
+            raise DecisionModelResponseError("Every decision question must be an object")
+        safety_identifier = str(self.config.get("safety_identifier", "")).strip()
+        if safety_identifier:
+            request["safety_identifier"] = safety_identifier
+        return request
+
+    @staticmethod
+    def _openai_probabilities(raw: Any) -> dict[str, float]:
+        if isinstance(raw, Mapping):
+            return {
+                str(key): float(value)
+                for key, value in raw.items()
+                if isinstance(value, (int, float))
+            }
+        probabilities: dict[str, float] = {}
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, Mapping):
+                    continue
+                value = item.get("value", item.get("label"))
+                probability = item.get("probability")
+                if value is not None and isinstance(probability, (int, float)):
+                    probabilities[str(value)] = float(probability)
+        return probabilities
+
+    @classmethod
+    def _openai_answers(cls, raw_answers: Any) -> dict[str, Any]:
+        if not isinstance(raw_answers, list):
+            raise DecisionModelResponseError(
+                "OpenAI Decisions response answers must be an array"
+            )
+        answers: dict[str, Any] = {}
+        for item in raw_answers:
+            if not isinstance(item, Mapping):
+                raise DecisionModelResponseError(
+                    "OpenAI Decisions response contains a non-object answer"
+                )
+            name = str(item.get("name", "")).strip()
+            if not name:
+                raise DecisionModelResponseError(
+                    "OpenAI Decisions response contains an unnamed answer"
+                )
+            answer_type = str(item.get("type", "")).strip().casefold()
+            normalized = dict(item)
+            normalized["probabilities"] = cls._openai_probabilities(
+                item.get("probabilities")
+            )
+            if answer_type == "predicate":
+                probability = item.get("probability")
+                if not isinstance(probability, (int, float)):
+                    raise DecisionModelResponseError(
+                        f"OpenAI predicate answer {name!r} has no probability"
+                    )
+                # ``noul`` is the existing harness' provider-neutral yes/no field.
+                normalized["noul"] = float(probability)
+            answers[name] = normalized
+        return answers
+
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        if self.provider == "openrouter":
+        if self.provider == "openai":
+            organization = str(
+                self.config.get("organization")
+                or os.getenv("OPENAI_ORGANIZATION", "")
+            ).strip()
+            project = str(
+                self.config.get("project") or os.getenv("OPENAI_PROJECT", "")
+            ).strip()
+            if organization:
+                headers["OpenAI-Organization"] = organization
+            if project:
+                headers["OpenAI-Project"] = project
+        elif self.provider == "openrouter":
             site_url = os.getenv("OPENROUTER_SITE_URL", "").strip()
             app_name = os.getenv("OPENROUTER_APP_NAME", "").strip()
             if site_url:
@@ -317,18 +456,24 @@ class SystemOneDecisionClient:
         questions: Mapping[str, Any],
     ) -> DecisionJudgment:
         """Return all typed judgments so routing can use atomic semantic probes."""
-        request = {
-            "model": self.model,
-            "state": dict(state),
-            "questions": dict(questions),
-        }
+        request = (
+            self._openai_request(state, questions)
+            if self.provider == "openai"
+            else {
+                "model": self.model,
+                "state": dict(state),
+                "questions": dict(questions),
+            }
+        )
         body, latency_ms = self._post(request)
         payload = self._unwrap(body)
-        answers = payload.get("answers")
+        answers = (
+            self._openai_answers(payload.get("answers"))
+            if self.provider == "openai"
+            else payload.get("answers")
+        )
         if not isinstance(answers, Mapping):
-            raise DecisionModelResponseError(
-                "Decision response has no typed answers"
-            )
+            raise DecisionModelResponseError("Decision response has no typed answers")
         usage = payload.get("usage") if isinstance(payload.get("usage"), Mapping) else {}
         input_tokens = int(
             usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0
