@@ -41,9 +41,15 @@ def run(runner, evaluator, results_dir, mode, data_limit=None, data_start=0, see
             absolute_offset = effective_start + idx
             task = format_question(row, absolute_offset)
             prediction = runner.run_reasoning(task)
-            reward, metrics = evaluator.check_srdd(prediction, task["Question"])
-            success = evaluator.srdd_binary_success(metrics)
-            fd.write(json.dumps({"id": task["id"], "pred": prediction, "reward": float(reward), "success": success, "metrics": evaluator.metrics_to_json(metrics)}, ensure_ascii=False) + "\n")
+            metadata = dict(getattr(runner, "last_result_metadata", {}) or {})
+            reward = metadata.get("final_reward")
+            metrics = metadata.get("final_metrics") or {}
+            success = metadata.get("final_success")
+            if reward is None or success is None:
+                reward, raw_metrics = evaluator.check_srdd(prediction, task["Question"])
+                metrics = evaluator.metrics_to_json(raw_metrics)
+                success = evaluator.srdd_binary_success(raw_metrics)
+            fd.write(json.dumps({"id": task["id"], "pred": prediction, "reward": float(reward), "success": success, "metrics": metrics, **metadata}, ensure_ascii=False) + "\n")
             fd.flush()
             os.fsync(fd.fileno())
             complete_item(runner, task["id"], absolute_offset + 1, result_path)

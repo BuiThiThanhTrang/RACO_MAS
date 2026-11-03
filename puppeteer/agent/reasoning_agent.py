@@ -8,18 +8,22 @@ from tools.base.register  import global_tool_registry
 from tools.web_search import Web_Search
 from tools.code_interpreter import CodeInterpreter
 from tools.file_read import FileRead
+from tools.media_inspect import MediaInspect
+from tools.spreadsheet_inspect import SpreadsheetInspect
 
 from agent.agent import Agent
 from agent.agent_info.global_info import GlobalInfo
 from agent.agent_info.workflow import Action
 from agent.agent_info.actions import REASONING_ACTION_LIST, TOOL_ACTION_LIST, TERMINATION_ACTION_LIST
 from role_aware.schemas import TeammateSpec
+from role_aware.musique_answers import parse_musique_output
 
 from utils.file_utils import prepare_python_code, extract_code_from_text, write_code, write_text, read_code
 
 
 PYTHON_GENERATION_ATTEMPTS = 3
 PYTHON_RUNTIME_REPAIR_ATTEMPTS = 2
+FILE_TOOL_ACTIONS = {"read_file", "inspect_media", "inspect_spreadsheet"}
 
 class Reasoning_Agent(Agent):
     def __init__(self, spec: TeammateSpec, index, runtime_config=None, policy=None, global_info=None, initial_dialog_history=None) -> None:
@@ -39,6 +43,15 @@ class Reasoning_Agent(Agent):
         self.system_prompt  =  "\n".join(system_prompt['system_prompt']).format(self.role_prompt, 
                                                                                 str(global_info.task.get("Question")), 
                                                                                 str(system_step_data))
+        assignment = getattr(global_info, "current_assignment", None)
+        if assignment:
+            self.system_prompt += (
+                "\n\nCurrent orchestrator assignment:\n"
+                f"Subtask: {assignment.get('subtask', '')}\n"
+                "Expected contribution: "
+                f"{assignment.get('expected_contribution', '')}\n"
+                "Complete this assignment while obeying the role output contract."
+            )
         
         self.workspace_path = global_info.workpath
 
@@ -103,6 +116,19 @@ class Reasoning_Agent(Agent):
         if len(data) > 5000:
             data = data[:5000]
         return data
+
+    def _is_retrieval_only(self, action_name, global_info=None):
+        """Whether a tool should return evidence without another actor-model call."""
+        search_config = self.runtime_config.get("web_search", {})
+        if action_name in {"search_web", "search_bing", "search_arxiv"}:
+            return bool(search_config.get("retrieval_only", False))
+        if action_name == "inspect_media" and global_info is not None:
+            extension = str(getattr(global_info, "file_extension", "") or "").casefold()
+            if extension in {".jpg", ".jpeg", ".png", ".mov", ".mp4", ".mkv", ".avi", ".webm"}:
+                media_config = self.runtime_config.get("media_tools", {})
+                vision_config = media_config.get("vision", {}) or {}
+                return bool(vision_config.get("retrieval_only", False))
+        return False
     
     def _execute_action(self, format_action, global_info):
         answer = ""
@@ -136,9 +162,15 @@ class Reasoning_Agent(Agent):
             if flag or code_generated_type:
                 tool_result = {"role": "user", "content": "You have get results from {}: {}".format(format_action.get("action"), step_data)}
                 self.dialog_history.append(tool_result)
-                answer, answer_tokens = self._answer_operation(global_info)
-                total_tokens += answer_tokens
-                print("\033[1;33mAgent {} answered: {}\033[0m".format(self.role, answer))
+                if self._is_retrieval_only(format_action.get("action"), global_info):
+                    print(
+                        "\033[1;33m[Retrieval Only] Tool evidence stored for "
+                        "the next routed agent.\033[0m"
+                    )
+                else:
+                    answer, answer_tokens = self._answer_operation(global_info)
+                    total_tokens += answer_tokens
+                    print("\033[1;33mAgent {} answered: {}\033[0m".format(self.role, answer))
     
         if format_action.get("action") in REASONING_ACTION_LIST:
             step_data, total_tokens = self._reasoning_operation(format_action, global_info)
@@ -195,7 +227,16 @@ class Reasoning_Agent(Agent):
             elif text_generated_type:
                 prompt = "Your previous text {}".format(read_code(global_info.code_path)) + prompt
 
-            if self.actions[0] == "run_python":
+            if self.actions[0] in FILE_TOOL_ACTIONS and global_info.file_name:
+                # The benchmark supplies exactly one trusted attachment. Avoid an
+                # unnecessary model call whose only job would be to copy its path,
+                # and prevent hallucinated relative paths.
+                action_json = {
+                    "action": self.actions[0],
+                    "parameter": global_info.file_name,
+                }
+                message = {"role": "assistant", "content": str(action_json)}
+            elif self.actions[0] == "run_python":
                 code, tokens, validation_error = self._request_python_code(prompt)
                 total_tokens += tokens
                 action_json = {"action": "run_python", "parameter": code}
@@ -228,6 +269,19 @@ class Reasoning_Agent(Agent):
         step_data, answer, flag, tokens = self._execute_action(action_json, global_info)
         total_tokens += tokens
         current_action = self._build_current_action(action_json, flag, answer, step_data, total_tokens)
+        if str(global_info.task.get("type", "")).casefold() == "musique":
+            parsed = parse_musique_output(step_data)
+            current_action.result["answer"] = (
+                parsed.final_answer or parsed.candidate_answer or ""
+            )
+            if parsed.final_answer:
+                current_action.result["final_answer"] = parsed.final_answer
+                if not global_info.answers or str(global_info.answers[-1]).strip() != parsed.final_answer:
+                    global_info.add_answer(parsed.final_answer)
+            if parsed.candidate_answer:
+                current_action.result["candidate_answer"] = parsed.candidate_answer
+            if parsed.intermediate_answer:
+                current_action.result["intermediate_answer"] = parsed.intermediate_answer
         logger.info("-"*40)
         terminated = False
         self.deactivate()
@@ -388,11 +442,35 @@ class Reasoning_Agent(Agent):
             print("Tool {} not registered for agent {}".format(name, self.role))
             return False, "Tool is not registered", total_tokens
 
-        if name == "read_file":
-            file_path = os.path.join(self.root_file_path, str(parameter))
+        normalized_parameter = " ".join(str(parameter or "").casefold().split())
+        for previous in global_info.workflow.workflow:
+            previous_name = str(previous.action.get("action") or "")
+            previous_parameter = " ".join(
+                str(previous.action.get("parameter") or "").casefold().split()
+            )
+            if (
+                previous.agent_role == self.role
+                and previous_name == name
+                and previous_parameter == normalized_parameter
+            ):
+                return (
+                    False,
+                    "Duplicate tool call blocked: this role already used the same "
+                    "action and parameter on this path. Change the query or use the "
+                    "new evidence with a different capability.",
+                    total_tokens,
+                )
+
+        if name in FILE_TOOL_ACTIONS:
+            attachment = global_info.file_name or parameter
+            file_path = os.path.join(self.root_file_path, str(attachment))
             flag, step_data = global_tool_registry.execute_tool(
-                name, file_path=file_path, file_extension=global_info.file_extension)
-            logger.info("[Read File] {}: {}".format("Success" if flag else "Failure", step_data))
+                name,
+                file_path=file_path,
+                file_extension=global_info.file_extension,
+                question=str(global_info.task.get("Question") or ""),
+            )
+            logger.info("[File Tool] %s %s: %s", name, "Success" if flag else "Failure", step_data)
             return flag, step_data, total_tokens
 
         if name == "run_python":
@@ -438,4 +516,4 @@ class Reasoning_Agent(Agent):
         return flag, step_data, total_tokens
 
     def _interaction_operation(self, code, env, global_info) -> str:
-        pass 
+        pass

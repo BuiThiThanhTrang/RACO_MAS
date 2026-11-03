@@ -13,9 +13,67 @@ class ModelConfig:
     api_profile: Optional[str] = None
     temperature: float = 0.0       
     description: str = ""          
+    structured_outputs: bool = False
+    reasoning_effort: Optional[str] = None
+    provider_require_parameters: bool = False
+    reasoning_parameter: str = "reasoning_effort"
+    request_parameter_allowlist: Optional[List[str]] = None
+    request_extra_body: Optional[Dict[str, Any]] = None
 
 
 MODEL_REGISTRY: Dict[str, ModelConfig] = {
+    "gpt-6-luna-openrouter": ModelConfig(
+        name="gpt-6-luna-openrouter",
+        function_name="query_gpt_6_luna_openrouter",
+        api_model_name="openai/gpt-6-luna",
+        provider="openai_compatible",
+        api_profile="openrouter",
+        model_size=100,  # opaque API model; estimate is used only by audit metadata
+        max_tokens=4096,
+        temperature=0.0,
+        structured_outputs=True,
+        reasoning_effort="medium",
+        provider_require_parameters=True,
+        reasoning_parameter="reasoning",
+        request_parameter_allowlist=[
+            "reasoning",
+            "max_tokens",
+            "response_format",
+        ],
+        description="Frozen GPT-6 Luna planner via OpenRouter with strict structured outputs",
+    ),
+    "gpt-6-sol-openrouter": ModelConfig(
+        name="gpt-6-sol-openrouter",
+        function_name="query_gpt_6_sol_openrouter",
+        api_model_name="openai/gpt-6-sol",
+        provider="openai_compatible",
+        api_profile="openrouter",
+        model_size=300,  # opaque API model; estimate is used only by audit metadata
+        max_tokens=4096,
+        temperature=0.0,
+        structured_outputs=True,
+        reasoning_effort="low",
+        provider_require_parameters=True,
+        reasoning_parameter="reasoning",
+        request_parameter_allowlist=[
+            "reasoning",
+            "max_tokens",
+            "response_format",
+        ],
+        description="Frozen GPT-6 Sol planner via OpenRouter with strict structured outputs",
+    ),
+    "gpt-6.1-sol": ModelConfig(
+        name="gpt-6.1-sol",
+        function_name="query_gpt_6_1_sol",
+        api_model_name="gpt-6.1-sol",
+        provider="openai",
+        model_size=300,
+        max_tokens=32768,
+        temperature=0.0,
+        structured_outputs=True,
+        reasoning_effort="medium",
+        description="Frozen OpenAI planner with structured output support",
+    ),
     "gpt-3.5": ModelConfig(
         name = "gpt-3.5",
         function_name="query_gpt",
@@ -44,7 +102,11 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         api_profile="huggingface_router",
         model_size=9,
         max_tokens=8192,
-        description="Qwen 3.5 9B via Hugging Face Inference Providers on Featherless AI",
+        temperature=0.1,
+        request_extra_body={
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
+        description="Qwen 3.5 9B non-thinking via Hugging Face Inference Providers on Featherless AI",
     ),
 
     "qwen-3.5-4b": ModelConfig(

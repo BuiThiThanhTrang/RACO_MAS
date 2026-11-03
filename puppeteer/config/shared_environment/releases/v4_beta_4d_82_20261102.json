@@ -1,0 +1,46 @@
+{
+  "release_id": "v4_beta_4d_82_20261102",
+  "output_root": "data/RoutingBench/v4_beta_4d_82_20261102",
+  "benchmark_output": "benchmarks/four_domain_v1_20261102",
+  "description": "Canonical four-domain RoutingBench v4-beta packet release. Packet and role-card semantics are preserved from their reviewed source releases.",
+  "evidence_runs": [
+    "database_shared_jev_16k_full_20261031",
+    "code_shared_jev_gemini_v3_20261101",
+    "formal_shared_jev_prover_v4_20261031",
+    "formal_minif2f_20_jev_live_20261101",
+    "structured_data_10_jev_qwen35_9b_live_20261102_b",
+    "structured_data_final10_jev_qwen35_9b_live_20261102_b",
+    "structured_data_formula2_jev_qwen35_9b_live_20261102_c",
+    "four_domain_migration_verification_20261102"
+  ],
+  "domains": {
+    "database_migration_integrity": {
+      "source_root": "data/RoutingBench/v4_domain_packets_rc1",
+      "expected_packets": 12,
+      "adapter_id": "database_migration.sqlite.v1",
+      "role_cards": "builtin:database_migration_integrity",
+      "run_config": "config/shared_environment/database_jev_16k.yaml"
+    },
+    "code_debugging": {
+      "source_root": "data/RoutingBench/v4_code_debugging_rc1",
+      "expected_packets": 20,
+      "adapter_id": "code_debugging.external.v1",
+      "role_cards": "config/shared_environment/code_roles.json",
+      "run_config": "config/shared_environment/code_jev_16k.yaml"
+    },
+    "formal_proof": {
+      "source_root": "data/RoutingBench/v4_formal_proof_30_20261101",
+      "expected_packets": 30,
+      "adapter_id": "formal_proof.lean4.v1",
+      "role_cards": "builtin:formal_proof",
+      "run_config": "config/shared_environment/formal_jev_16k.yaml"
+    },
+    "structured_data_processing": {
+      "source_root": "data/RoutingBench/v4_five_domains_100_20261101",
+      "expected_packets": 20,
+      "adapter_id": "spreadsheetbench.python_oj.v1",
+      "role_cards": "builtin:structured_data_processing",
+      "run_config": "config/shared_environment/structured_data_250_20_jev_qwen35_9b_16k.yaml"
+    }
+  }
+}

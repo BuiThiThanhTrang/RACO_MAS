@@ -17,6 +17,7 @@ class FileRead(Tool):
     .pptx
     .wav
     .html .htm
+    .zip .py .pdb
     """
     
     def __init__(self, name):
@@ -47,8 +48,13 @@ class FileRead(Tool):
                 return False, "File Not Exists"
             try:
                 converter = self._get_converter()
-                ans = converter.convert_local(path=file_path, 
-                                              file_extension=file_extension)
+                ans = converter.convert_local(
+                    path=file_path,
+                    file_extension=file_extension,
+                    mlm_prompt=kwargs.get("question"),
+                )
+                if not hasattr(ans, "text_content"):
+                    return False, f"File converter returned an invalid result: {ans}"
                 return True, ans.text_content
             except Exception as e:
                 return False, f"Error processing file: {str(e)}"

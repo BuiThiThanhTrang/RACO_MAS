@@ -7,8 +7,15 @@ from agent.register.register import AgentRegister
 from inference.reasoning.reasoning import GraphReasoning
 from inference.graph.agent_graph import AgentGraph
 from inference.graph.action_graph import ActionGraph
+from inference.policy.factory import create_policy
 from inference.policy.role_aware_reinforce import RoleAwareREINFORCE
 from role_aware.profile_store import ProfileStore
+from role_aware.routing_profile_store import StaticRoutingProfileStore
+from role_aware.route_experience import RouteExperienceStore
+from role_aware.validation import (
+    validate_decision_planner_pool,
+    validate_frozen_planner_pool,
+)
 from role_aware.evidence import ProfileEvidenceAccumulator
 from inference.policy.role_aware_reinforce import ORCHESTRATOR_STOP
 from role_aware.checkpointing import (
@@ -49,6 +56,7 @@ class BenchmarkRunner:
         policy_config,
         tool_policy=None,
         profile_config=None,
+        experience_config=None,
         checkpoint_config=None,
         run_dir=None,
         dataset_name=None,
@@ -71,11 +79,16 @@ class BenchmarkRunner:
         self.profile_build_mode = bool(profile_build_mode)
         self.probe_items_per_teammate = int(probe_items_per_teammate)
         self.reference_items_per_teammate = int(reference_items_per_teammate)
+        self.policy_type = str(policy_config.get("type", "role_aware_reinforce"))
         self.profile_updates_enabled = bool(
-            self.profile_build_mode
-            or (
-                self.dataset_mode == "train"
-                and policy_config.get("policy_mode") == "train"
+            self.policy_type == "role_aware_reinforce"
+            and getattr(profile_config, "update_enabled", True)
+            and (
+                self.profile_build_mode
+                or (
+                    self.dataset_mode == "train"
+                    and policy_config.get("policy_mode") == "train"
+                )
             )
         )
         graph_config = self.global_config.get("graph", {})
@@ -93,14 +106,63 @@ class BenchmarkRunner:
         self.registry.register_all_agents(
             self.personas_path, runtime_config=self.global_config
         )
+        if self.policy_type == "frozen_llm_planner":
+            validate_frozen_planner_pool(self.registry.agent_config)
+        elif self.policy_type == "decision_model_planner":
+            validate_decision_planner_pool(self.registry.agent_config)
         self.initial_agent_count = self.registry.agent_num
 
         profile_alpha = getattr(profile_config, "alpha", 0.2)
         self.profile_reset_scope = getattr(profile_config, "reset_scope", "run")
-        self.profile_store = ProfileStore(alpha=profile_alpha)
+        if self.policy_type in {"frozen_llm_planner", "decision_model_planner"}:
+            self.profile_store = StaticRoutingProfileStore()
+        else:
+            self.profile_store = ProfileStore(alpha=profile_alpha)
         self.profile_store.initialize(self.registry.agent_config)
+        experience_mode = str(getattr(experience_config, "mode", "none"))
+        experience_path = getattr(experience_config, "path", None)
+        if experience_mode == "route_outcome" and not experience_path:
+            experience_path = self.run_dir / "route_experience.json"
+        self.experience_store = RouteExperienceStore(
+            mode=experience_mode, path=experience_path
+        )
+        self.pending_experience_event = None
         self.pool_fingerprint = pool_fingerprint(self.registry.agent_config)
-        manifest_path = split_manifest_path(self.dataset_name, self.split_seed)
+        if self.dataset_name == "GAIA":
+            official_split = (
+                "validation"
+                if self.dataset_mode in {"validation", "dev"}
+                else "test"
+            )
+            manifest_path = (
+                Path("data") / "GAIA" / "2023" / official_split / "metadata.parquet"
+            )
+            if not manifest_path.is_file():
+                raise FileNotFoundError(
+                    f"GAIA metadata not found: {manifest_path}. "
+                    "Set HF_TOKEN after accepting the dataset terms, then run "
+                    "python -m scripts.download_gaia --split all."
+                )
+        elif self.dataset_name == "MuSiQue":
+            official_split = {
+                "dev": "validation",
+                "validation": "validation",
+                "train": "train",
+                "test": "test",
+                "final": "test",
+            }.get(self.dataset_mode)
+            if official_split is None:
+                raise ValueError(
+                    "MuSiQue supports train, validation/dev, and test/final splits"
+                )
+            manifest_path = Path("data") / "MuSiQue" / f"{official_split}.parquet"
+            if not manifest_path.is_file():
+                raise FileNotFoundError(
+                    f"MuSiQue data not found: {manifest_path}. Run "
+                    "python -m scripts.download_musique --split validation."
+                )
+        else:
+            manifest_path = split_manifest_path(self.dataset_name, self.split_seed)
         self.split_manifest_hash = file_hash(manifest_path)
         policy_for_hash = json.loads(json.dumps(policy_config, default=str))
         policy_for_hash.pop("dataset_mode", None)
@@ -177,8 +239,8 @@ class BenchmarkRunner:
                     f"Profile source {self.profile_source} requires --profile_path"
                 )
             self._load_initial_profiles(profile_path, self.profile_source)
-        elif self.profile_source == "priors" and profile_path is not None:
-            raise ValueError("Profile source priors does not accept --profile_path")
+        elif self.profile_source in {"priors", "role_cards"} and profile_path is not None:
+            raise ValueError(f"Profile source {self.profile_source} does not accept --profile_path")
         elif (
             self.dataset_mode == "train"
             and self.policy_mode == "train"
@@ -195,8 +257,10 @@ class BenchmarkRunner:
                 "Fresh train requires a completed probe profile. "
                 "Pass --profile_path or configure profiles.initialization.path."
             )
-        self.profile_evidence = ProfileEvidenceAccumulator(
-            self.profile_store, self.registry.agent_config
+        self.profile_evidence = (
+            ProfileEvidenceAccumulator(self.profile_store, self.registry.agent_config)
+            if self.policy_type == "role_aware_reinforce"
+            else None
         )
 
         self.allowed_tools = tuple(getattr(tool_policy, "allowed", ()))
@@ -206,11 +270,13 @@ class BenchmarkRunner:
             allowed_tools=self.allowed_tools,
         )
         self.action_graph = ActionGraph(allowed_tools=self.allowed_tools)
-        self.policy = RoleAwareREINFORCE(
+        self.policy = create_policy(
             agent_graph=self.graph,
             action_graph=self.action_graph,
             config=policy_config,
             runtime_config=self.global_config,
+            experience_store=self.experience_store,
+            legacy_policy_cls=RoleAwareREINFORCE,
         )
         if self._resume_payload is not None:
             self.policy.load_training_state_dict(
@@ -349,6 +415,19 @@ class BenchmarkRunner:
         return "a" if self.resume_training else "w"
 
     def complete_item(self, task_id, next_split_offset, result_path):
+        if self.pending_experience_event is not None:
+            if str(task_id) != self.pending_experience_event.task_id:
+                raise ValueError("Pending route experience task does not match completed item")
+            committed = self.experience_store.observe(self.pending_experience_event)
+            self.last_result_metadata["experience_committed"] = bool(committed)
+            if getattr(self, "last_trace", None) is not None:
+                self.last_trace.emit(
+                    "route_experience_committed",
+                    committed=bool(committed),
+                    experience_mode=self.experience_store.mode,
+                    event=self.pending_experience_event.to_dict(),
+                )
+            self.pending_experience_event = None
         self.progress["completed_items"] = int(
             self.progress.get("completed_items", 0)
         ) + 1
@@ -364,6 +443,7 @@ class BenchmarkRunner:
             )
 
     def finalize_run(self):
+        self.experience_store.save()
         if self.policy.optimizer_updates_enabled and int(
             self.progress.get("completed_items", 0)
         ) > 0:
@@ -373,6 +453,8 @@ class BenchmarkRunner:
         return None
 
     def setup_reasoning(self, data_item, policy=None):
+        if self.pending_experience_event is not None:
+            raise RuntimeError("Previous task result was not committed with complete_item")
         self.registry.reset_episode_state()
         self.graph.reset_episode_state()
         self.action_graph.reset_episode_state()
@@ -388,6 +470,7 @@ class BenchmarkRunner:
         self._attempt_counts[task_id] = attempt
         trace = AuditTrace(directory / f"attempt-{attempt:04d}", self.run_dir.name,
                            task_id, f"attempt-{attempt:04d}", enabled=self.audit_enabled)
+        self.last_trace = trace
         if self.audit_enabled:
             trace.context["manifest_hash"] = self.audit_manifest["manifest_hash"]
         runtime = dict(self.global_config, audit_split=self.dataset_mode)
@@ -428,12 +511,32 @@ class BenchmarkRunner:
         reasoning.start(self.save_state if self.save_state else None)
         self.save_state = False
 
-        frozen = (digest(self.profile_store.state_dict()),
-                  digest(self.policy.policy_network.state_dict())) if self.dataset_mode != "train" else None
+        if hasattr(self.policy, "state_fingerprint"):
+            policy_fingerprint = self.policy.state_fingerprint()
+        else:
+            policy_fingerprint = digest(self.policy.policy_network.state_dict())
+        frozen = (digest(self.profile_store.state_dict()), policy_fingerprint) \
+            if self.dataset_mode != "train" else None
         final_ans, _ = reasoning.n_step(self.max_step_num)
-        if frozen is not None and frozen != (digest(self.profile_store.state_dict()),
-                                            digest(self.policy.policy_network.state_dict())):
+        if hasattr(self.policy, "state_fingerprint"):
+            policy_fingerprint_after = self.policy.state_fingerprint()
+        else:
+            policy_fingerprint_after = digest(self.policy.policy_network.state_dict())
+        if frozen is not None and frozen != (
+            digest(self.profile_store.state_dict()), policy_fingerprint_after
+        ):
             raise RuntimeError("Policy/profile changed during evaluation")
+
+        self.pending_experience_event = getattr(reasoning, "experience_event", None)
+        outcome = dict(getattr(reasoning, "final_outcome", {}) or {})
+        self.last_result_metadata.update(
+            final_success=outcome.get("success"),
+            final_reward=outcome.get("reward"),
+            semantic_success=outcome.get("semantic_success"),
+            effective_success=outcome.get("effective_success"),
+            experience_success=outcome.get("experience_success"),
+            final_metrics=outcome.get("metrics", {}),
+        )
 
         reasoning.visualize_path()
         reasoning.visualize_graph()

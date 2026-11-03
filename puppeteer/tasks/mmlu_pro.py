@@ -30,6 +30,7 @@ def format_question(task):
         "Answer": task["answer"],
         "choices": string.ascii_uppercase[:len(task["options"])],
         "id": task["question_id"],
+        "category": task["category"],
     }
 
 def run(runner, evaluator, results_dir, mode, data_limit=None, data_start=0, seed=42):
@@ -46,9 +47,12 @@ def run(runner, evaluator, results_dir, mode, data_limit=None, data_start=0, see
             absolute_offset = effective_start + idx
             task = format_question(row)
             prediction = runner.run_reasoning(task)
-            success = evaluator.check_mmlu(prediction, task["Answer"])
+            metadata = dict(getattr(runner, "last_result_metadata", {}) or {})
+            success = metadata.get("final_success")
+            if success is None:
+                success = evaluator.check_mmlu(prediction, task["Answer"])
             fd.write(json.dumps({"id": task["id"], "pred": prediction, "answer": task["Answer"], "correct": success,
-                                 "offset": absolute_offset, **getattr(runner, "last_result_metadata", {})}, ensure_ascii=False) + "\n")
+                                 "offset": absolute_offset, **metadata}, ensure_ascii=False) + "\n")
             fd.flush()
             os.fsync(fd.fileno())
             complete_item(runner, task["id"], absolute_offset + 1, result_path)

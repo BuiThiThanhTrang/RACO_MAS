@@ -31,6 +31,7 @@ import easyocr
 import numpy as np
 from pytube import YouTube
 import base64
+import zipfile
 
 from urllib.parse import urljoin, urlparse, parse_qs
 from urllib.request import url2pathname
@@ -79,14 +80,14 @@ class PlainTextConverter(DocumentConverter):
             return None
 
         content_type, encoding = mimetypes.guess_type("__placeholder" + extension)
-        if content_type is None:
+        explicit_text_extensions = {".py", ".pdb", ".md", ".log", ".yaml", ".yml"}
+        if (
+            extension.lower() not in explicit_text_extensions
+            and (content_type is None or "text/" not in content_type.lower())
+        ):
             return None
 
-        if "text/" not in content_type.lower():
-            return None
-
-        text_content = ""
-        with open(local_path, "rt",  encoding="utf-8") as fh:
+        with open(local_path, "rt", encoding="utf-8", errors="replace") as fh:
             text_content = fh.read()
 
         return DocumentConverterResult(
@@ -538,16 +539,6 @@ class PptxConverter(HtmlConverter):
             return True
         return False
 
-import whisper
-import joblib
-# cache asr function
-asr_cache = joblib.Memory(location=".cache/asr", verbose=0)
-
-@asr_cache.cache
-def asr(local_path):
-    whisper_model = whisper.load_model("large")
-    return whisper_model.transcribe(local_path)['text']
-
 class WavConverter(DocumentConverter):
     def convert(self, local_path, **kwargs) -> Union[None, DocumentConverterResult]:
         # Bail if not a XLSX
@@ -555,62 +546,88 @@ class WavConverter(DocumentConverter):
         if extension.lower() != ".wav":
             return None
 
-        # recognizer = sr.Recognizer()
-        # with sr.AudioFile(local_path) as source:
-        #     audio = recognizer.record(source)
-        #     text_content = recognizer.recognize_google(audio).strip()
-        text_content = asr(local_path)
+        from tools.media_inspect import transcribe_audio_file
+
+        text_content = transcribe_audio_file(local_path)
 
         return DocumentConverterResult(
             title=None,
-            text_content="### Audio Transcript:\n" + ("[No speech detected]" if text_content == "" else text_content),
+            text_content="### Audio Analysis:\n" + text_content,
         )
 
 
 class Mp3Converter(WavConverter):
     def convert(self, local_path, **kwargs) -> Union[None, DocumentConverterResult]:
-        # Bail if not a MP3
+        # Compressed audio formats supported by faster-whisper/PyAV.
         extension = kwargs.get("file_extension", "")
-        if extension.lower() != ".mp3":
+        if extension.lower() not in {".mp3", ".m4a", ".flac", ".ogg"}:
             return None
 
-        # handle, temp_path = tempfile.mkstemp(suffix=".wav")
-        # os.close(handle)
-        # try:
-        #     sound = pydub.AudioSegment.from_mp3(local_path)
-        #     sound.export(temp_path, format="wav")
+        from tools.media_inspect import transcribe_audio_file
 
-        #     _args = dict()
-        #     _args.update(kwargs)
-        #     _args["file_extension"] = ".wav"
-
-        #     result = super().convert(temp_path, **_args)
-        # finally:
-        #     os.unlink(temp_path)
-
-        # return result
-        # ASR, large time cost
-        # if "5b89b147-cdab-40e1-be5b-819bc076c270" in local_path:
-        #     text_content = ""
-        # else:
-        #     text_content = asr(local_path)
-
-        mlm_client = kwargs.get("mlm_client")
-        if mlm_client is not None:
-            text_content = self._get_audio_transcript(local_path, extension, mlm_client).strip()
+        text_content = transcribe_audio_file(local_path)
 
         return DocumentConverterResult(
             title=None,
-            text_content="### Audio Transcript:\n" + ("[No speech detected]" if text_content == "" else text_content),
+            text_content="### Audio Analysis:\n" + text_content,
         )
-    
-    def _get_audio_transcript(self, local_path, extension, client):
-        audio_file = open(local_path, "rb")
-        transcript = client.audio.transcriptions.create(
-                                                        model="whisper-1",
-                                                        file=audio_file
-                                                        )
-        return transcript.text
+
+
+class ZipConverter(DocumentConverter):
+    """Safely expand small GAIA archives and convert their member files."""
+
+    def convert(self, local_path, **kwargs) -> Union[None, DocumentConverterResult]:
+        extension = kwargs.get("file_extension", "")
+        if extension.lower() != ".zip":
+            return None
+
+        max_files = int(kwargs.get("archive_max_files", 50))
+        archive_depth = int(kwargs.get("archive_depth", 0))
+        if archive_depth >= 2:
+            raise ValueError("Nested archive depth exceeds the safety limit")
+        max_uncompressed_bytes = int(
+            kwargs.get("archive_max_uncompressed_bytes", 100 * 1024 * 1024)
+        )
+        max_chars = int(kwargs.get("archive_max_chars", 60000))
+        sections = []
+        with zipfile.ZipFile(local_path) as archive:
+            members = [member for member in archive.infolist() if not member.is_dir()]
+            if len(members) > max_files:
+                raise ValueError(
+                    f"Archive contains {len(members)} files; safety limit is {max_files}"
+                )
+            if sum(member.file_size for member in members) > max_uncompressed_bytes:
+                raise ValueError("Archive exceeds the uncompressed-size safety limit")
+
+            with tempfile.TemporaryDirectory(prefix="gaia-archive-") as temp_dir:
+                root = pathlib.Path(temp_dir).resolve()
+                nested_converter = MarkdownConverter(
+                    mlm_client=kwargs.get("mlm_client")
+                )
+                for member in members:
+                    target = (root / member.filename).resolve()
+                    if not target.is_relative_to(root):
+                        raise ValueError(f"Unsafe archive member path: {member.filename}")
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(member) as source, target.open("wb") as destination:
+                        shutil.copyfileobj(source, destination)
+                    result = nested_converter.convert_local(
+                        str(target), archive_depth=archive_depth + 1
+                    )
+                    if not isinstance(result, DocumentConverterResult):
+                        sections.append(
+                            f"## Archive member: {member.filename}\n[Could not convert: {result}]"
+                        )
+                    else:
+                        sections.append(
+                            f"## Archive member: {member.filename}\n{result.text_content}"
+                        )
+                    if sum(map(len, sections)) >= max_chars:
+                        sections.append("[Archive output truncated at the configured limit]")
+                        break
+        return DocumentConverterResult(
+            title=None, text_content="\n\n".join(sections)[:max_chars]
+        )
 
 
 class ImageConverter(DocumentConverter):
@@ -645,7 +662,13 @@ class ImageConverter(DocumentConverter):
         if mlm_client is not None:
             md_content += (
                 "\n# Description:\n"
-                + self._get_mlm_description(local_path, extension, mlm_client, prompt=kwargs.get("mlm_prompt")).strip()
+                + self._get_mlm_description(
+                    local_path,
+                    extension,
+                    mlm_client,
+                    prompt=kwargs.get("mlm_prompt"),
+                    model=kwargs.get("vision_model", "gemini-2.5-flash"),
+                ).strip()
                 + "\n"
             )
         # OCR, large time cost
@@ -689,7 +712,9 @@ class ImageConverter(DocumentConverter):
             except:
                 return None
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-    def _get_mlm_description(self, local_path, extension, client, prompt=None):
+    def _get_mlm_description(
+        self, local_path, extension, client, prompt=None, model="gemini-2.5-flash"
+    ):
         if prompt is None or prompt.strip() == "":
             prompt = """Write a detailed description for an image by describing the overall setting, main subjects, their actions and interactions, 
             secondary elements in the background, colors and lighting, the emotions and atmosphere conveyed, and any implied meaning or symbolism.
@@ -721,13 +746,13 @@ class ImageConverter(DocumentConverter):
                 }
             ]
 
-            response = client.chat.completions.create(model="gpt-4o",messages=messages)
+            response = client.chat.completions.create(model=model, messages=messages)
             return response.choices[0].message.content
 
-class FileConversionException(BaseException):
+class FileConversionException(Exception):
     pass
 
-class UnsupportedFormatException(BaseException):
+class UnsupportedFormatException(Exception):
     pass
 
 class MarkdownConverter:
@@ -764,6 +789,7 @@ class MarkdownConverter:
         self.register_page_converter(CsvConverter())
         self.register_page_converter(JsonConverter())
         self.register_page_converter(XmlConverter())
+        self.register_page_converter(ZipConverter())
 
         if IS_PDF_CAPABLE:
             self.register_page_converter(PdfConverter())
@@ -881,16 +907,16 @@ class MarkdownConverter:
 
         # If we got this far without success, report any exceptions
         if len(error_trace) > 0:
-            # raise FileConversionException(
-            #     f"Could not convert '{local_path}' to Markdown. File type was recognized as {extensions}. While converting the file, the following error was encountered:\n\n{error_trace}"
-            # )
-            return f"Could not convert '{local_path}' to Markdown. File type was recognized as {extensions}. While converting the file, the following error was encountered:\n\n{error_trace}"
+            raise FileConversionException(
+                f"Could not convert '{local_path}' to Markdown. File type was "
+                f"recognized as {extensions}. Conversion error:\n\n{error_trace}"
+            )
 
         # Nothing can handle it!
-        # raise UnsupportedFormatException(
-        #     f"Could not convert '{local_path}' to Markdown. The formats {extensions} are not supported."
-        # )
-        return f"Could not convert '{local_path}' to Markdown. The formats {extensions} are not supported."
+        raise UnsupportedFormatException(
+            f"Could not convert '{local_path}' to Markdown. The formats "
+            f"{extensions} are not supported."
+        )
 
     def _append_ext(self, extensions, ext):
         """Append a unique non-None, non-empty extension to a list of extensions."""

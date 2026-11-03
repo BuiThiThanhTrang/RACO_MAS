@@ -46,3 +46,42 @@ def validate_teammate_specs(specs: Iterable[TeammateSpec]) -> tuple[TeammateSpec
             forbidden_terms=(spec.teammate_id, spec.backbone, spec.provider_profile or ""),
         )
     return ordered
+
+
+def _validate_static_planner_role_contract(
+    specs: Iterable[TeammateSpec],
+) -> tuple[TeammateSpec, ...]:
+    ordered = tuple(specs)
+    for spec in ordered:
+        actions = spec.role_card.allowed_actions
+        if len(actions) != 1:
+            raise ValueError(
+                f"Frozen planner MVP requires one canonical action for {spec.teammate_id!r}"
+            )
+        if actions[0] == "terminate" and spec.available:
+            raise ValueError(
+                "STOP is an orchestrator action; a legacy terminate persona must "
+                "be marked unavailable in static planner pools"
+            )
+    return ordered
+
+
+def validate_frozen_planner_pool(
+    specs: Iterable[TeammateSpec],
+) -> tuple[TeammateSpec, ...]:
+    """Validate the homogeneous actor pool used by the frozen LLM baseline."""
+    ordered = _validate_static_planner_role_contract(specs)
+    backbones = {spec.backbone for spec in ordered}
+    if len(backbones) != 1:
+        raise ValueError(
+            "Frozen LLM planner experiments require one homogeneous actor backbone; "
+            f"got {sorted(backbones)}"
+        )
+    return ordered
+
+
+def validate_decision_planner_pool(
+    specs: Iterable[TeammateSpec],
+) -> tuple[TeammateSpec, ...]:
+    """Validate role/action contracts while allowing heterogeneous backbones."""
+    return _validate_static_planner_role_contract(specs)

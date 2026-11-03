@@ -206,6 +206,8 @@ node_modules/
 /puppeteer/results/
 /puppeteer/runs/
 /puppeteer/docs/run.txt
+/puppeteer/.codex_tmp/
+/puppeteer/1.84
 
 # PyPI configuration file
 .pypirc

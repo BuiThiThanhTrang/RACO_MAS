@@ -1,0 +1,172 @@
+[
+  {
+    "agent_id": "Repository Test Reproducer",
+    "role_name": "Repository Test Reproducer",
+    "role_goal": "Establish a fresh empirical baseline by preparing the pinned checkout and executing the supplied reproducer without changing the implementation.",
+    "semantic_family": "execution",
+    "tools": [
+      "produce_candidate"
+    ],
+    "use_when": [
+      "The checkout is not ready or no fresh baseline execution result exists.",
+      "Existing baseline evidence is missing or stale after an observable change to the execution inputs or environment.",
+      "The reported behavior still needs to be confirmed with the supplied reproducer."
+    ],
+    "avoid_when": [
+      "A fresh baseline result already describes the current unmodified checkout.",
+      "A candidate patch is applied and the unresolved need is validation of that candidate.",
+      "The requested work is diagnosis, source modification, promotion, or finalization rather than reproduction."
+    ],
+    "supported_inputs": [
+      "Executor-visible test contract and designated test targets.",
+      "Pinned repository metadata and public task artifacts.",
+      "Observable checkout and baseline freshness state."
+    ],
+    "expected_outputs": [
+      "A materialized pinned checkout artifact.",
+      "A fresh baseline execution record with outcome, return code, and concrete output."
+    ]
+  },
+  {
+    "agent_id": "Failure Diagnostician",
+    "role_name": "Failure Diagnostician",
+    "role_goal": "Analyze concrete execution or repair evidence, explain the most likely failure mechanism, and record an evidence-grounded diagnosis without modifying source code.",
+    "semantic_family": "diagnosis",
+    "tools": [
+      "inspect_inputs",
+      "inspect_repository_file",
+      "search_repository",
+      "diagnose_failure"
+    ],
+    "use_when": [
+      "A fresh baseline or candidate execution exposes a failure whose mechanism is not yet adequately explained.",
+      "Observable patch rejection or validation evidence contradicts or makes the current diagnosis stale.",
+      "Recent repair attempts produced no substantive progress and the concrete failure evidence should be re-examined."
+    ],
+    "avoid_when": [
+      "No concrete failure, rejection, or conflicting execution evidence is available.",
+      "The current diagnosis remains consistent with all visible evidence and no new evidence has appeared.",
+      "The unresolved operation is to author, apply, validate, promote, or finalize an artifact rather than analyze evidence."
+    ],
+    "supported_inputs": [
+      "Fresh baseline or candidate test output and return status.",
+      "Observable rejection, validation, and no-progress evidence.",
+      "Public repository excerpts, task artifacts, and an existing diagnosis when present."
+    ],
+    "expected_outputs": [
+      "A diagnosis artifact that identifies the failure mechanism and cites observable evidence.",
+      "Repair constraints or uncertainties grounded in evidence, without a source patch or routing instruction."
+    ]
+  },
+  {
+    "agent_id": "Patch Author",
+    "role_name": "Patch Author",
+    "role_goal": "Inspect executor-visible source, tests, and failure evidence, then produce the smallest justified unified diff that addresses the current defect.",
+    "semantic_family": "repair",
+    "tools": [
+      "inspect_inputs",
+      "inspect_repository_file",
+      "search_repository",
+      "repair_candidate"
+    ],
+    "use_when": [
+      "Concrete failure evidence supports a source change and no applicable candidate patch currently exists.",
+      "A previous candidate was rejected or failed validation and observable feedback supports a materially revised patch.",
+      "Bounded source inspection can resolve the exact edit needed to create an applicable candidate."
+    ],
+    "avoid_when": [
+      "An applied candidate patch is awaiting a fresh validation result.",
+      "A candidate is already verified or has been promoted to a downstream artifact.",
+      "The same repair approach is repeating without new evidence or a substantive state change.",
+      "There is no concrete failure evidence on which to ground a source modification."
+    ],
+    "supported_inputs": [
+      "Executor-visible repository files, tests, and task artifacts.",
+      "Fresh test results and an evidence-grounded diagnosis when available.",
+      "Observable patch rejection or candidate validation feedback."
+    ],
+    "expected_outputs": [
+      "A minimal repository-grounded unified diff submitted to the patch validator.",
+      "An applied candidate patch artifact, or an explicit evidence-grounded inability to produce one."
+    ]
+  },
+  {
+    "agent_id": "Regression Verifier",
+    "role_name": "Regression Verifier",
+    "role_goal": "Execute the public regression contract against the current applied candidate and record a fresh validation result tied to that candidate.",
+    "semantic_family": "verification",
+    "tools": [
+      "validate_candidate"
+    ],
+    "use_when": [
+      "A candidate patch is applied and has no fresh validation result.",
+      "The applied candidate changed after the most recent validation result.",
+      "Completion claims require concrete regression evidence for the current candidate."
+    ],
+    "avoid_when": [
+      "No candidate patch is currently applied.",
+      "The current candidate already has a fresh validation result and has not changed.",
+      "The observed problem is checkout preparation, diagnosis, source modification, promotion, or finalization."
+    ],
+    "supported_inputs": [
+      "An applied candidate patch and its identity.",
+      "Executor-visible regression contract, runtime, and designated test targets."
+    ],
+    "expected_outputs": [
+      "A fresh candidate test record linked to the current patch.",
+      "Concrete pass, fail, or environment-error evidence without modifying the candidate."
+    ]
+  },
+  {
+    "agent_id": "Verified Patch Consumer",
+    "role_name": "Verified Patch Consumer",
+    "role_goal": "Optional deliverable packaging after fresh validation. Promote a candidate into the downstream workflow artifact only when fresh public evidence verifies that exact candidate.",
+    "semantic_family": "workflow operator",
+    "tools": [
+      "execute_downstream"
+    ],
+    "use_when": [
+      "The current candidate has a fresh passing regression result and has not yet been promoted.",
+      "A downstream verified artifact is required and all visible promotion preconditions are satisfied."
+    ],
+    "avoid_when": [
+      "No applied candidate or no fresh passing result exists.",
+      "The passing result refers to a different or stale candidate.",
+      "A verified downstream artifact already exists for the current candidate.",
+      "The task already has fresh passing candidate validation and no additional packaging is requested; STOP is sufficient."
+    ],
+    "supported_inputs": [
+      "An applied candidate patch and matching fresh passing validation record.",
+      "Observable promotion requirements and existing downstream artifact state."
+    ],
+    "expected_outputs": [
+      "A verified downstream patch artifact linked to the candidate and passing test evidence."
+    ]
+  },
+  {
+    "agent_id": "Patch Finalizer",
+    "role_name": "Patch Finalizer",
+    "role_goal": "Optional deliverable packaging after fresh validation. Commit a verified downstream patch as the final deliverable when the visible workflow requirements are satisfied and no unresolved blocker remains.",
+    "semantic_family": "finalizer",
+    "tools": [
+      "finalize"
+    ],
+    "use_when": [
+      "A verified downstream patch exists and the final deliverable has not been committed.",
+      "Visible completion requirements are satisfied and no unresolved issue blocks commitment."
+    ],
+    "avoid_when": [
+      "The candidate is absent, unvalidated, failing, or not yet represented by a verified downstream artifact.",
+      "An unresolved issue or open requirement still requires execution work.",
+      "The final deliverable is already committed.",
+      "The task already has fresh passing candidate validation and no additional packaging is requested; STOP is sufficient."
+    ],
+    "supported_inputs": [
+      "A verified downstream patch with matching fresh validation evidence.",
+      "Observable open requirements, issues, and final artifact state."
+    ],
+    "expected_outputs": [
+      "A committed final deliverable referencing the verified patch and its validation evidence."
+    ]
+  }
+]

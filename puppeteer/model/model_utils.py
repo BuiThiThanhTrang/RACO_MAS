@@ -249,13 +249,32 @@ def _request_payload(
         int(model_config_dict.get("max_tokens", reserved_output_tokens)),
         int(reserved_output_tokens),
     )
+    parameter_allowlist = model_config_dict.get("request_parameter_allowlist")
+    allowed = set(parameter_allowlist or ())
+    restrict_parameters = parameter_allowlist is not None
+
     common = {
         "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
-        "temperature": model_config_dict.get("temperature", 0.1),
         "stream": False,
     }
+    if not restrict_parameters or "temperature" in allowed:
+        common["temperature"] = model_config_dict.get("temperature", 0.1)
+    if (
+        model_config_dict.get("response_format") is not None
+        and (not restrict_parameters or "response_format" in allowed)
+    ):
+        common["response_format"] = model_config_dict["response_format"]
+    if (
+        model_config_dict.get("reasoning_effort") is not None
+        and (not restrict_parameters or "reasoning_effort" in allowed)
+    ):
+        common["reasoning_effort"] = model_config_dict["reasoning_effort"]
+    if model_config_dict.get("extra_body") is not None:
+        common["extra_body"] = model_config_dict["extra_body"]
+    if restrict_parameters:
+        return common
     if is_gemini or is_huggingface_router:
         return common
     return {

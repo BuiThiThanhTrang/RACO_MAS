@@ -14,6 +14,12 @@
         "And finish your answer with the following template: FINAL ANSWER: [YOUR FINAL ANSWER]",
         "Return your answer with only the single letter."
     ],
+    "GAIA_answer": [
+        "Use the retrieved evidence, file contents, calculations, and prior reasoning to answer the GAIA question.",
+        "Return an unambiguous number, a short string, or a comma-separated list as requested.",
+        "Do not include units, thousands separators, articles, or extra explanation unless the question explicitly requires them.",
+        "Finish with exactly: FINAL ANSWER: [YOUR FINAL ANSWER]"
+    ],
     "gsm_answer": [
         "Calculate carefully and provide only the final numerical answer.",
         "The answer must be a pure number - either an integer or decimal number.",
@@ -60,6 +66,12 @@
         "Format the answer as a single letter.",
         "Do not include any other units or punctuation.",
         "Return your answer with only the single letter."
+    ],
+    "GAIA_aggregation": [
+        "You have candidate answers from one reasoning path:\n{}",
+        "Preserve the answer supported by the strongest retrieved or computed evidence.",
+        "Return an unambiguous number, short string, or comma-separated list with no extra explanation.",
+        "Finish with exactly: FINAL ANSWER: [YOUR FINAL ANSWER]"
     ],
     "gsm_aggregation": [
         "You have several answer candidates. They are:\n{}",

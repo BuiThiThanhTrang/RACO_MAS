@@ -17,10 +17,13 @@ from urllib.request import url2pathname
 from typing import Any, Dict, List, Optional, Union, Tuple
 from .converter import MarkdownConverter, UnsupportedFormatException, FileConversionException
 
-import diskcache as dc
 import yaml
 
+from .web_search_client import build_web_search_client
+
 global_config = yaml.safe_load(open("./config/global.yaml", "r"))
+
+
 class SimpleTextBrowser:
     """(In preview) An extremely simple text-based web browser comparable to Lynx. Suitable for Agentic use."""
 
@@ -30,6 +33,7 @@ class SimpleTextBrowser:
         viewport_size: Optional[int] = 1024 * 8,
         downloads_folder: Optional[Union[str, None]] = None,
         bing_api_key: Optional[Union[str, None]] = None,
+        search_api_key: Optional[Union[str, None]] = None,
         request_kwargs: Optional[Union[Dict[str, Any], None]] = None,
     ):
         self.start_page: str = start_page if start_page else "about:blank"
@@ -39,10 +43,12 @@ class SimpleTextBrowser:
         self.page_title: Optional[str] = None
         self.viewport_current_page = 0
         self.viewport_pages: List[Tuple[int, int]] = list()
+        # These key arguments remain as compatibility aliases for the optional
+        # SearchApi provider. Local SearXNG does not require a search API key.
+        self.web_search_config = global_config.get("web_search") or {}
+        api_key_env = self.web_search_config.get("api_key_env", "SEARCHAPI_API_KEY")
+        self.search_api_key = search_api_key or bing_api_key or os.getenv(api_key_env)
         self.set_address(self.start_page)
-        self.bing_api_key = bing_api_key
-        if bing_api_key is  None:
-            self.bing_api_key = global_config.get("api_keys").get("bing_api_key")
         
         self.request_kwargs = request_kwargs
         self._mdconvert = MarkdownConverter()
@@ -52,6 +58,7 @@ class SimpleTextBrowser:
         self._find_on_page_last_result: Union[int, None] = None  # Location of the last result
 
         self.bing_cache = None
+        self._web_search_client = None
 
     @property
     def address(self) -> str:
@@ -207,45 +214,21 @@ class SimpleTextBrowser:
             self.viewport_pages.append((start_idx, end_idx))
             start_idx = end_idx
 
-    def _bing_api_call(self, query: str) -> Dict[str, Dict[str, List[Dict[str, Union[str, Dict[str, str]]]]]]:
+    def _bing_api_call(self, query: str) -> Dict[str, Any]:
+        """Retrieve a SERP through the configured web-search provider."""
         # Check the cache
         if self.bing_cache is not None:
             cached = self.bing_cache.get(query)
             if cached is not None:
                 return cached
-        # Make sure the key was set
-        if self.bing_api_key is None:
-            raise ValueError("Missing Bing API key.")
 
-        # Prepare the request parameters
-        request_kwargs = self.request_kwargs.copy() if self.request_kwargs is not None else {}
-
-        if "headers" not in request_kwargs:
-            request_kwargs["headers"] = {}
-        request_kwargs["headers"]["Ocp-Apim-Subscription-Key"] = self.bing_api_key
-
-        if "params" not in request_kwargs:
-            request_kwargs["params"] = {}
-        request_kwargs["params"]["q"] = query
-        request_kwargs["params"]["textDecorations"] = False
-        request_kwargs["params"]["textFormat"] = "raw"
-
-        request_kwargs["stream"] = False
-        request_kwargs["timeout"] = (5,10)
-
-        # Make the request
-        response = None
-        for _ in range(2):
-            try:
-                response = requests.get("https://api.bing.microsoft.com/v7.0/search", **request_kwargs)
-                response.raise_for_status()
-                break
-            except Exception:
-                pass
-            time.sleep(1)
-        if response is None:
-            raise requests.exceptions.RequestException("Failed to fetch Bing search results.")
-        results = response.json()
+        if self._web_search_client is None:
+            self._web_search_client = build_web_search_client(
+                api_key=self.search_api_key,
+                config=self.web_search_config,
+                request_kwargs=self.request_kwargs,
+            )
+        results = self._web_search_client.search_json(query)
 
         # Cache the results
         if self.bing_cache is not None:
@@ -263,57 +246,16 @@ class SimpleTextBrowser:
                     return f"You previously visited this page {round(time.time() - self.history[i][1])} seconds ago.\n"
             return ""
 
-        web_snippets: List[str] = list()
-        idx = 0
-        if "webPages" in results:
-            for page in results["webPages"]["value"]:
-                idx += 1
-                web_snippets.append(
-                    f"{idx}. [{page['name']}]({page['url']})\n{_prev_visit(page['url'])}{page['snippet']}"
-                )
-                if "deepLinks" in page:
-                    for dl in page["deepLinks"]:
-                        idx += 1
-                        web_snippets.append(
-                            f"{idx}. [{dl['name']}]({dl['url']})\n{_prev_visit(dl['url'])}{dl['snippet'] if 'snippet' in dl else ''}"
-                        )
-
-        news_snippets = list()
-        if "news" in results:
-            for page in results["news"]["value"]:
-                idx += 1
-                datePublished = ""
-                if "datePublished" in page:
-                    datePublished = "\nDate published: " + page["datePublished"].split("T")[0]
-                news_snippets.append(
-                    f"{idx}. [{page['name']}]({page['url']})\n{_prev_visit(page['url'])}{page['description']}{datePublished}"
-                )
-
-        video_snippets = list()
-        if "videos" in results:
-            for page in results["videos"]["value"]:
-                if not page["contentUrl"].startswith("https://www.youtube.com/watch?v="):
-                    continue
-                idx += 1
-                datePublished = ""
-                if "datePublished" in page:
-                    datePublished = "\nDate published: " + page["datePublished"].split("T")[0]
-                video_snippets.append(
-                    f"{idx}. [{page['name']}]({page['contentUrl']})\n{_prev_visit(page['contentUrl'])}{page.get('description', '')}{datePublished}"
-                )
-
         self.page_title = f"{query} - Search"
-
-        content = (
-            f"A Bing search for '{query}' found {len(web_snippets) + len(news_snippets) + len(video_snippets)} results:\n\n## Web Results\n"
-            + "\n\n".join(web_snippets)
+        if self._web_search_client is None:
+            self._web_search_client = build_web_search_client(
+                api_key=self.search_api_key,
+                config=self.web_search_config,
+                request_kwargs=self.request_kwargs,
+            )
+        self._set_page_content(
+            self._web_search_client.format_results(query, results, _prev_visit)
         )
-        if len(news_snippets) > 0:
-            content += "\n\n## News Results:\n" + "\n\n".join(news_snippets)
-        if len(video_snippets) > 0:
-            content += "\n\n## Video Results:\n" + "\n\n".join(video_snippets)
-
-        self._set_page_content(content)
 
     def _fetch_page(self, url: str) -> None:
         download_path = ""

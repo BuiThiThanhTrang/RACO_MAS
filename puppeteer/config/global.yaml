@@ -83,7 +83,57 @@ api_keys:
   # Using Gemini via OpenAI-compatible endpoint
   openai_api_key: "GEMINI_API_KEY"
   openai_base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
-  bing_api_key: ""  # bing api key for web search (optional)
+
+# `search_bing` remains a compatibility alias for existing personas. New
+# personas can use the provider-neutral `search_web` action. Both call this
+# local SearXNG instance, so no paid search API key is required.
+web_search:
+  provider: searxng
+  endpoint: http://127.0.0.1:8080/search
+  endpoint_env: SEARXNG_URL
+  categories: general
+  language: en
+  safesearch: 0
+  max_results: 5
+  timeout_seconds: 20
+  max_retries: 2
+  # Search roles only retrieve evidence. A downstream role consumes it, which
+  # avoids spending another actor-model call merely to paraphrase the SERP.
+  retrieval_only: true
+  cache:
+    enabled: true
+    path: cache/web_search/searxng
+    ttl_seconds: 86400
+
+# Local ASR avoids a paid transcription API. The first audio/video task downloads
+# the selected faster-whisper model into the normal Hugging Face cache.
+media_tools:
+  audio:
+    model: small
+    device: cpu
+    compute_type: int8
+    beam_size: 5
+    vad_filter: true
+    timeout_seconds: 900
+    cache_path: cache/asr/faster_whisper
+  vision:
+    # Uses the existing Gemini OpenAI-compatible client configured above.
+    model: gemini-2.5-flash
+    # Vision is an evidence-extraction stage. Keep Gemini thinking disabled so
+    # hidden reasoning tokens cannot exhaust the visible-output budget.
+    reasoning_effort: none
+    max_tokens: 8192
+    structured_output: true
+    # Preserve the homogeneous Qwen actor pool: Gemini returns evidence, then a
+    # separately routed reasoning role turns that evidence into an answer.
+    retrieval_only: true
+  video:
+    sample_frames: 8
+    transcribe_audio: true
+
+spreadsheet_tools:
+  max_cells: 4000
+  max_chars: 60000
 
 max_retry_times: 3  # maximum number of times to retry API calls
 retry_wait_min: 20  # minimum seconds between chat API retries

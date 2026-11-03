@@ -83,13 +83,23 @@ class PythonInterpreter(CodeInterpreter):
     def run(self, work_path, code_path, file_path):
         """Executes a process and handles file movement, command execution, and timeouts."""
         try:
+            copied_attachment = ""
             if len(file_path) > 0:
-                self.move_file(src_path=file_path, dest_path=work_path)
+                copied_attachment = os.path.abspath(
+                    os.path.join(work_path, os.path.basename(file_path))
+                )
+                copied = self.move_file(
+                    src_path=file_path, dest_path=copied_attachment
+                )
+                if copied is False or not os.path.isfile(copied_attachment):
+                    return False, f"Attachment could not be copied from {file_path}"
 
             command = [sys.executable, os.path.basename(code_path)]
             child_env = os.environ.copy()
             child_env["PYTHONIOENCODING"] = "utf-8"
             child_env["PYTHONUTF8"] = "1"
+            if copied_attachment:
+                child_env["GAIA_ATTACHMENT"] = copied_attachment
             process_options = {
                 "cwd": work_path,
                 "stdout": subprocess.PIPE,

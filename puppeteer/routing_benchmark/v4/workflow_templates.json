@@ -1,0 +1,80 @@
+[
+  {
+    "domain": "transactional_service",
+    "split": "development",
+    "task": "Apply an eligible account-plan change, verify the recorded terms, and commit a confirmation.",
+    "input_artifact": "account record and requested plan change",
+    "candidate_artifact": "proposed account-plan mutation",
+    "downstream_artifact": "recorded account-plan mutation",
+    "final_artifact": "committed customer confirmation",
+    "primary_agent": "agent_04",
+    "alternate_agent": "agent_36",
+    "consumer_agent": "agent_29",
+    "fault_signal": "The returned mutation conflicts with the visible eligibility rule or omits a required term."
+  },
+  {
+    "domain": "structured_data_processing",
+    "split": "development",
+    "task": "Transform a supplied table, validate the calculated columns and schema, and publish the resulting artifact.",
+    "input_artifact": "source table and transformation contract",
+    "candidate_artifact": "transformed table",
+    "downstream_artifact": "schema-bound output table",
+    "final_artifact": "published validated data artifact",
+    "primary_agent": "agent_11",
+    "alternate_agent": "agent_41",
+    "consumer_agent": "agent_29",
+    "fault_signal": "A calculated column or required schema field is inconsistent with the visible transformation contract."
+  },
+  {
+    "domain": "cross_app_workflow",
+    "split": "validation",
+    "task": "Move a structured record across application boundaries, preserve required fields, and confirm the final update.",
+    "input_artifact": "source application record and destination contract",
+    "candidate_artifact": "cross-application transfer payload",
+    "downstream_artifact": "destination application record",
+    "final_artifact": "confirmed cross-application update",
+    "primary_agent": "agent_10",
+    "alternate_agent": "agent_29",
+    "consumer_agent": "agent_06",
+    "fault_signal": "The transfer payload has a visible field mismatch or provenance inconsistency."
+  },
+  {
+    "domain": "code_debugging",
+    "split": "validation",
+    "task": "Reproduce a deterministic defect, apply a candidate fix, run the specified checks, and commit a verified patch.",
+    "input_artifact": "failing test and source snapshot",
+    "candidate_artifact": "candidate code patch",
+    "downstream_artifact": "test result for the patched source",
+    "final_artifact": "committed verified patch",
+    "primary_agent": "agent_21",
+    "alternate_agent": "agent_35",
+    "consumer_agent": "agent_29",
+    "fault_signal": "The candidate patch conflicts with the failing test or produces an inconsistent check result."
+  },
+  {
+    "domain": "personal_device_tool",
+    "split": "test",
+    "task": "Apply a device configuration change, inspect the resulting state, and commit a confirmation only after the postcondition holds.",
+    "input_artifact": "device state and requested configuration",
+    "candidate_artifact": "proposed device operation",
+    "downstream_artifact": "updated device state",
+    "final_artifact": "confirmed device configuration",
+    "primary_agent": "agent_29",
+    "alternate_agent": "agent_14",
+    "consumer_agent": "agent_10",
+    "fault_signal": "The visible postcondition or operation parameters do not match the requested configuration."
+  },
+  {
+    "domain": "scientific_procedure",
+    "split": "test",
+    "task": "Process a measurement record, validate the derived result against stated constraints, and publish a supported conclusion.",
+    "input_artifact": "measurement record and analysis constraints",
+    "candidate_artifact": "derived scientific result",
+    "downstream_artifact": "constraint-checked analysis record",
+    "final_artifact": "published supported conclusion",
+    "primary_agent": "agent_34",
+    "alternate_agent": "agent_33",
+    "consumer_agent": "agent_26",
+    "fault_signal": "The derived result violates a visible constraint or conflicts with the supplied measurement record."
+  }
+]

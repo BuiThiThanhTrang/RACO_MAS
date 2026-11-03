@@ -1,0 +1,81 @@
+mode: frozen
+seed: 42
+personas_path: personas/role_aware/musique_gemini25_flash_pool.jsonl
+output_dir: runs
+
+dataset:
+  name: MuSiQue
+  mode: validation
+  hop_count: null
+  data_limit: null
+  data_start: 0
+  split_seed: 42
+
+tools:
+  allowed: []
+
+profiles:
+  mode: static_role_cards
+  update_enabled: false
+  include_uncertainty: false
+  reset_scope: run
+  initialization:
+    source: role_cards
+    path: null
+    required_for_train: false
+
+experience:
+  mode: none
+  reset_scope: run
+  retrieval_limit: 20
+
+policy:
+  type: decision_model_planner
+  policy_mode: frozen
+  routing_guard:
+    enabled: true
+    profile: musique_stage_v1
+    max_role_calls_per_path: 2
+    prevent_role_repeat_same_state: true
+    answer_extraction:
+      enabled: true
+      model: gpt-6-luna-openrouter
+      reasoning_effort: low
+      max_repair_attempts: 1
+      roles:
+        - Comparison & Composition Reasoner
+        - General Evidence Solver
+        - Evidence Verifier
+        - Answer Integrator
+  decision:
+    provider: openrouter
+    model: typesafe/jev-1.13
+    api_key_env: OPENROUTER_API_KEY
+    timeout_seconds: 30
+    max_retries: 5
+    retry_backoff_seconds: 2
+    max_retry_delay_seconds: 30
+    max_options: 255
+    root_selection_mode: flat_bundle
+    experience_limit: 20
+
+global_config:
+  graph:
+    max_width: 2
+    max_depth: 5
+  aggregation:
+    mode: majority_verifier
+    verifier_model: gpt-6-luna-openrouter
+    seed: 42
+  musique:
+    semantic_outcome:
+      enabled: true
+      model: gpt-6-luna-openrouter
+      reasoning_effort: low
+      max_repair_attempts: 1
+      failure_policy: exact_match
+      use_for:
+        - reporting
+        - route_experience
+        - profile_evidence
+        - training_reward

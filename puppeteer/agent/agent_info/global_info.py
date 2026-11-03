@@ -16,6 +16,8 @@ class GlobalInfo:
         self.file_name = task.get("file_name")
         self.file_extension = self._extract_file_extension(self.file_name)
         self.answers = []
+        self.current_assignment = None
+        self.task_signature = ()
 
         self.code_path = ""
         self.env_exists = env is not None
@@ -88,4 +90,3 @@ class GlobalInfo:
             "env_name": self.env_name,
             "supervisor": self.supervisor
         }
-    

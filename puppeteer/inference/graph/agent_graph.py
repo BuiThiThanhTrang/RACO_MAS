@@ -100,7 +100,7 @@ class AgentGraph(Graph):
     def search_agent_indices(self):
         indices = []
         for agent in self._nodes:
-            if any(tool in agent.tools for tool in ("access_website", "search_bing", "search_arxiv")):
+            if any(tool in agent.tools for tool in ("access_website", "search_bing", "search_web", "search_arxiv")):
                 indices.append(agent.index)
         return indices
     
