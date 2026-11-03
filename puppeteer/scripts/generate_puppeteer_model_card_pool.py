@@ -3,7 +3,8 @@
 The legacy pool is deliberately left untouched: it is the baseline.  This script
 uses the existing deterministic ``mimas_pool.jsonl`` migration for the fourteen
 role cards, replaces its generic capability priors, and writes a separate pool
-with the same agents, actions, backbones, and decoding settings.
+with the same agents, actions, and decoding settings.  The optional replacement
+map below creates the Gemma 3/Qwen ablation pool requested for this experiment.
 """
 
 from __future__ import annotations
@@ -34,10 +35,26 @@ DIMENSIONS = (
 BACKBONE_BASES: dict[str, dict[str, float]] = {
     "qwen-2.5-7b": dict(zip(DIMENSIONS, (0.69, 0.75, 0.80, 0.73, 0.81, 0.75, 0.70, 0.70, 0.74, 0.75))),
     "qwen-2.5-14b": dict(zip(DIMENSIONS, (0.76, 0.82, 0.84, 0.80, 0.84, 0.78, 0.70, 0.70, 0.81, 0.78))),
+    # Qwen 3.5 4B: MMLU-Pro 79.1, HMMT 74.0, LiveCodeBench 55.8,
+    # IFEval 89.8, BFCL 50.3, and TAU2-Bench 79.9 in the official card.
+    # These are translated into ordinal priors, never copied as probabilities.
+    "qwen-3.5-4b": dict(zip(DIMENSIONS, (0.70, 0.84, 0.79, 0.82, 0.70, 0.76, 0.70, 0.70, 0.80, 0.73))),
+    # Gemma 3 12B has published 12B-family results for general, mathematical,
+    # coding, and long-context tasks.  Tool use remains conservative because
+    # the card does not provide a directly comparable function-calling score.
+    "gemma-3-12b-it": dict(zip(DIMENSIONS, (0.76, 0.80, 0.80, 0.80, 0.77, 0.79, 0.70, 0.70, 0.81, 0.74))),
     "llama-3.1-8b": dict(zip(DIMENSIONS, (0.68, 0.70, 0.80, 0.70, 0.78, 0.76, 0.70, 0.70, 0.78, 0.80))),
     "llama-3.2-3b": dict(zip(DIMENSIONS, (0.62, 0.64, 0.74, 0.64, 0.62, 0.70, 0.70, 0.70, 0.68, 0.67))),
     "mistralai/ministral-3b-2512": dict(zip(DIMENSIONS, (0.68, 0.70, 0.77, 0.70, 0.73, 0.72, 0.70, 0.70, 0.72, 0.74))),
     "mistral-nemo-12b": dict(zip(DIMENSIONS, (0.72, 0.72, 0.67, 0.72, 0.70, 0.76, 0.70, 0.70, 0.75, 0.80))),
+}
+
+# Applied when generating the model-card pool.  Keep the legacy source pool
+# unchanged so historical baseline checkpoints remain reproducible.
+BACKBONE_REPLACEMENTS = {
+    "qwen-2.5-7b": "qwen-3.5-4b",
+    "llama-3.1-8b": "gemma-3-12b-it",
+    "llama-3.2-3b": "qwen-2.5-7b",
 }
 
 
@@ -63,9 +80,11 @@ def generate(source: Path, output: Path) -> list[dict[str, Any]]:
     }
 
     for role_slot, record in enumerate(records):
-        backbone = record["backbone"]
+        source_backbone = record["backbone"]
+        backbone = BACKBONE_REPLACEMENTS.get(source_backbone, source_backbone)
         if backbone not in BACKBONE_BASES:
             raise ValueError(f"Missing model-card base prior for {backbone!r}")
+        record["backbone"] = backbone
         role_card = record["role_card"]
         role_card["capability_prior"] = blended_prior(
             BACKBONE_BASES[backbone], role_card["capability_prior"], role_mean
@@ -74,9 +93,12 @@ def generate(source: Path, output: Path) -> list[dict[str, Any]]:
         metadata.update(
             {
                 "role_slot": role_slot,
-                "prior_profile_version": "puppeteer-model-card-role-blend-v1",
+                "prior_profile_version": "puppeteer-model-card-role-blend-v3-qwen35",
                 "prior_profile_source": "official-model-cards-and-published-benchmarks",
                 "derived_from": "puppeteer_pool.jsonl",
+                "backbone_replacement": (
+                    f"{source_backbone}->{backbone}" if source_backbone != backbone else "unchanged"
+                ),
             }
         )
 

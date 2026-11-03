@@ -1,0 +1,179 @@
+run_id: mmlu_train_domain_specialist_baseline_reward_s42
+seed: 42
+mode: train
+personas_path: personas/role_aware/mmlu_pro_domain_specialist_split_backbone_pool.jsonl
+output_dir: runs
+dataset:
+  name: MMLU-Pro
+  mode: train
+  data_limit: 400
+  data_start: 0
+  split_seed: 42
+  reference_items_per_teammate: 50
+  probe_items_per_teammate: 10
+policy:
+  type: role_aware_reinforce
+  device:
+    type: cpu
+  paths:
+    checkpoint_path: checkpoint/role_aware
+    model_path: null
+    load_policy: false
+  cost:
+    scale: 0.1
+    growth_rate: 1.0
+    inverse: false
+  training:
+    loading: false
+    training: true
+    learning_rate: 5.0e-05
+    gamma: 0.9
+    entropy_coef: -0.1
+    threshold_margin_coef: 0.0
+    lambda_kl_loss: 0.0
+  reward:
+    mode: baseline_compatible_v1
+    baseline_compatible:
+      step_scale: 0.1
+      growth_rate: 1.0
+      inverse: false
+      action_cost_normalization: 100000.0
+      default_action_factor: -1.0
+      web_action_factor: -1.5
+      terminal_factor: 0.5
+      web_actions:
+      - search_bing
+      - search_arxiv
+      - access_website
+  policy_mode: train
+  routing:
+    mode: baseline_threshold_v1
+    baseline_threshold_numerator: 1.5
+    allow_policy_transfer: true
+  dataset_name: MMLU-Pro
+  dataset_mode: train
+  seed: 42
+  split_seed: 42
+tools:
+  allowed:
+  - run_python
+profiles:
+  alpha: 0.0001
+  reset_scope: run
+  update_strategy: role_task_intersection
+  evidence_level: path_terminal
+  deduplicate_within_path: true
+  aggregate_parallel_evidence: true
+  update_global_reliability: true
+  update_role_adherence_separately: true
+  initialization:
+    source: priors
+    path: null
+    required_for_train: false
+checkpoint:
+  interval_items: 5
+  snapshot_interval_items: 5
+  keep_snapshots: 5
+global_config:
+  logging:
+    level: INFO
+    logpath: ./logs
+  trajectory_reward:
+    enabled: false
+    apply_during: train
+    backend: http
+    model: Skywork/Skywork-Reward-V2-Llama-3.1-8B
+    base_url_env: SKYWORK_REWARD_BASE_URL
+    api_key_env: SKYWORK_REWARD_API_KEY
+    endpoint: /v1/reward
+    weight: 0.1
+    centered: true
+    max_length: 4096
+    max_chars: 12000
+    max_step_chars: 3000
+    timeout_seconds: 60
+    max_retries: 3
+    failure_policy: task_reward_only
+    trace_file: trajectory_rewards.jsonl
+    cache:
+      enabled: true
+  cost_reward:
+    step_penalty: 0.0
+    token_cost_weight: 0.0
+    normalization: 1000.0
+  state_representation:
+    type: api_embedding
+    provider: gemini
+    provider_profile: gemini_openai
+    model: models/gemini-embedding-2
+    dim: 3072
+    max_chars: 12000
+    max_retry_times: 3
+    reward: 0.0
+    cache:
+      enabled: true
+      path: cache/embeddings
+  api_providers:
+    openai:
+      api_key_env: OPENAI_API_KEY
+      base_url: https://api.openai.com/v1
+    gemini_openai:
+      api_key_env: GEMINI_API_KEY
+      base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    huggingface_router:
+      api_key_env: HF_TOKEN
+      base_url: https://router.huggingface.co/v1
+    featherless_ai:
+      api_key_env: FEATHERLESS_API_KEY
+      base_url: https://api.featherless.ai/v1
+    novita:
+      api_key_env: NOVITA_API_KEY
+      base_url: https://api.novita.ai/openai
+    openrouter:
+      api_key_env: OPENROUTER_API_KEY
+      base_url: https://openrouter.ai/api/v1
+      headers:
+        HTTP-Referer: $OPENROUTER_SITE_URL
+        X-Title: $OPENROUTER_APP_NAME
+    local_vllm:
+      api_key: none
+      base_url: http://localhost:8000/v1
+  api_keys:
+    openai_api_key: GEMINI_API_KEY
+    openai_base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    bing_api_key: ''
+  max_retry_times: 3
+  retry_wait_min: 20
+  retry_wait_max: 30
+  max_json_reformat_turns: 3
+  chat_context:
+    max_input_tokens: 12000
+    reserved_output_tokens: 4096
+    retry_shrink_factor: 0.75
+    min_input_tokens: 8000
+    preserve_system: true
+    preserve_latest_messages: 4
+    chars_per_token: 3.0
+  external_tools_enabled: false
+  file_path:
+    root_file_path: ./data
+  graph:
+    max_width: 3
+    max_depth: 2
+  task_analyzer:
+    primary:
+      backend: openai_compatible_embedding
+      model: qwen/qwen3-embedding-8b
+      dim: 4096
+      frozen: true
+      base_url_env: TASK_ANALYZER_BASE_URL
+      api_key_env: TASK_ANALYZER_API_KEY
+      max_input_tokens: 512
+  task_reward:
+    correct: 1.0
+    incorrect: -1.0
+  audit:
+    enabled: true
+  aggregation:
+    mode: legacy
+    seed: 42

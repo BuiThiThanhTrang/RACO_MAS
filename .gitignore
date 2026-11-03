@@ -234,3 +234,5 @@ tmp/
 /puppeteer/data/*
 !/puppeteer/data/splits/
 !/puppeteer/data/splits/**
+
+/.venv311

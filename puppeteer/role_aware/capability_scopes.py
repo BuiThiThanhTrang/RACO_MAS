@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-ROLE_CAPABILITY_SCOPES = {
-    # Tool-backed research roles use the tool to acquire evidence, then reason
-    # about and integrate it.  ``tool_use`` does not receive MMLU-Pro evidence
-    # because it is outside that task's capability scope.
+from role_aware.schemas import ACTIVE_CAPABILITY_SCHEMA
+
+LEGACY_ROLE_CAPABILITY_SCOPES = {
     "File Analyst": ("tool_use", "domain_reasoning", "general_reasoning", "integration"),
     "Academic Researcher": ("tool_use", "domain_reasoning", "general_reasoning", "integration"),
     "Web Researcher": ("tool_use", "domain_reasoning", "general_reasoning", "integration"),
@@ -22,28 +21,103 @@ ROLE_CAPABILITY_SCOPES = {
     "Integrator / Concluder": ("integration", "general_reasoning", "verification"),
     "Python Tool Agent": ("tool_use", "software_engineering", "quantitative_reasoning", "verification"),
     "Stop Controller": ("planning", "verification", "integration"),
-    "Quantitative & Formal Reasoner": ("quantitative_reasoning", "general_reasoning", "verification"),
-    "Natural & Life Science Specialist": ("domain_reasoning", "general_reasoning", "verification"),
-    "Computing & Engineering Specialist": ("software_engineering", "domain_reasoning", "verification"),
-    "Social, Legal & Business Analyst": ("domain_reasoning", "general_reasoning", "verification"),
-    "Humanities & Behavioral Analyst": ("domain_reasoning", "general_reasoning", "verification"),
-    "Generalist Independent Solver": ("general_reasoning", "integration", "verification"),
-    "Adversarial Verifier": ("verification", "repair", "general_reasoning"),
+    "Quantitative & Formal Reasoner": ("quantitative_reasoning", "general_reasoning", "verification", "planning"),
+    "Natural & Life Science Specialist": ("domain_reasoning", "general_reasoning", "verification", "integration"),
+    "Computing & Engineering Specialist": ("software_engineering", "quantitative_reasoning", "domain_reasoning", "general_reasoning", "verification"),
+    "Social, Legal & Business Specialist": ("domain_reasoning", "general_reasoning", "quantitative_reasoning", "verification", "integration"),
+    "Social, Legal & Business Analyst": ("domain_reasoning", "general_reasoning", "quantitative_reasoning", "verification", "integration"),
+    "Humanities & Behavioral Specialist": ("domain_reasoning", "general_reasoning", "commonsense_generation", "verification", "integration"),
+    "Humanities & Behavioral Analyst": ("domain_reasoning", "general_reasoning", "commonsense_generation", "verification", "integration"),
+    "Generalist Independent Solver": ("planning", "general_reasoning", "quantitative_reasoning", "domain_reasoning", "verification", "integration"),
+    "Adversarial Verifier": ("verification", "general_reasoning", "quantitative_reasoning", "domain_reasoning", "integration"),
     "Requirements Analyst": ("planning", "software_engineering", "integration"),
     "Solution Architect": ("planning", "software_engineering", "integration"),
     "Implementation Engineer": ("software_engineering", "integration", "repair"),
     "Test & Execution Specialist": ("tool_use", "software_engineering", "verification", "repair"),
     "Debug & Repair Specialist": ("repair", "software_engineering", "verification"),
     "Coverage Reviewer": ("verification", "integration", "software_engineering"),
+    "Task Decomposer": ("planning", "general_reasoning", "integration"),
+    "Evidence Retriever": ("tool_use", "domain_reasoning", "general_reasoning", "integration"),
+    "Bridge Entity Reasoner": ("domain_reasoning", "general_reasoning", "integration"),
+    "Comparison & Composition Reasoner": ("quantitative_reasoning", "general_reasoning", "integration"),
+    "General Evidence Solver": ("general_reasoning", "domain_reasoning", "integration"),
+    "Evidence Verifier": ("verification", "general_reasoning"),
+    "Answer Integrator": ("integration", "general_reasoning", "verification"),
+    "Recovery Strategist": ("planning", "repair", "verification"),
+    "Media Analyst": ("tool_use", "domain_reasoning", "general_reasoning"),
+    "Python Data Analyst": ("tool_use", "software_engineering", "quantitative_reasoning", "verification"),
+    "Spreadsheet Analyst": ("tool_use", "quantitative_reasoning", "software_engineering", "verification", "integration"),
 }
-
-TASK_CAPABILITY_SCOPES = {
+LEGACY_TASK_CAPABILITY_SCOPES = {
     "GSM-Hard": ("quantitative_reasoning", "general_reasoning", "planning", "verification", "integration", "tool_use"),
     "gsm-hard": ("quantitative_reasoning", "general_reasoning", "planning", "verification", "integration", "tool_use"),
-    "MMLU-Pro": ("domain_reasoning", "general_reasoning", "planning", "verification", "integration"),
+    "MMLU-Pro": ("domain_reasoning", "general_reasoning", "planning", "quantitative_reasoning", "software_engineering", "commonsense_generation", "verification", "integration"),
     "SRDD": ("software_engineering", "general_reasoning", "planning", "verification", "repair", "integration", "tool_use"),
     "CW": ("commonsense_generation", "general_reasoning", "verification", "repair", "integration"),
 }
+
+MMLU_DOMAIN_ROLE_CAPABILITY_SCOPES = {
+    "File Analyst": ("general_reasoning", "answer_integration", "evidence_verification"),
+    "Academic Researcher": ("general_reasoning", "natural_science", "answer_integration"),
+    "Web Researcher": ("general_reasoning", "answer_integration", "evidence_verification"),
+    "Website Reader": ("general_reasoning", "answer_integration", "evidence_verification"),
+    "Planner / Decomposer": ("task_planning", "general_reasoning", "answer_integration"),
+    "Problem Decomposer": ("task_planning", "general_reasoning", "evidence_verification"),
+    "General Reasoner": ("general_reasoning", "evidence_verification", "answer_integration"),
+    "Quantitative Reasoner": ("formal_quantitative", "general_reasoning", "evidence_verification"),
+    "Domain Reasoner": ("general_reasoning", "natural_science", "social_legal_business", "humanities_behavioral", "evidence_verification"),
+    "Software Engineer": ("computing_engineering", "task_planning", "evidence_verification", "answer_integration"),
+    "Commonsense Generator": ("humanities_behavioral", "general_reasoning", "answer_integration"),
+    "Critic / Verifier": ("evidence_verification", "general_reasoning"),
+    "Reflector": ("evidence_verification", "task_planning", "answer_integration"),
+    "Summarizer": ("answer_integration", "general_reasoning", "evidence_verification"),
+    "Modifier / Repair": ("computing_engineering", "evidence_verification", "general_reasoning"),
+    "Integrator / Concluder": ("answer_integration", "general_reasoning", "evidence_verification"),
+    "Python Tool Agent": ("computing_engineering", "formal_quantitative", "evidence_verification"),
+    "Stop Controller": ("stop_decision", "task_planning", "evidence_verification", "answer_integration"),
+    "Quantitative & Formal Reasoner": ("formal_quantitative", "general_reasoning", "evidence_verification", "task_planning"),
+    "Natural & Life Science Specialist": ("natural_science", "general_reasoning", "evidence_verification", "answer_integration"),
+    "Computing & Engineering Specialist": ("computing_engineering", "formal_quantitative", "general_reasoning", "evidence_verification"),
+    "Social, Legal & Business Specialist": ("social_legal_business", "general_reasoning", "formal_quantitative", "evidence_verification", "answer_integration"),
+    "Social, Legal & Business Analyst": ("social_legal_business", "general_reasoning", "formal_quantitative", "evidence_verification", "answer_integration"),
+    "Humanities & Behavioral Specialist": ("humanities_behavioral", "general_reasoning", "evidence_verification", "answer_integration"),
+    "Humanities & Behavioral Analyst": ("humanities_behavioral", "general_reasoning", "evidence_verification", "answer_integration"),
+    "Generalist Independent Solver": ("task_planning", "formal_quantitative", "natural_science", "computing_engineering", "social_legal_business", "humanities_behavioral", "general_reasoning", "evidence_verification", "answer_integration"),
+    "Adversarial Verifier": ("evidence_verification", "general_reasoning", "formal_quantitative", "natural_science", "computing_engineering", "social_legal_business", "humanities_behavioral", "answer_integration"),
+    "Requirements Analyst": ("task_planning", "computing_engineering", "answer_integration"),
+    "Solution Architect": ("task_planning", "computing_engineering", "answer_integration"),
+    "Implementation Engineer": ("computing_engineering", "answer_integration", "evidence_verification"),
+    "Test & Execution Specialist": ("computing_engineering", "evidence_verification"),
+    "Debug & Repair Specialist": ("computing_engineering", "evidence_verification", "general_reasoning"),
+    "Coverage Reviewer": ("evidence_verification", "answer_integration", "computing_engineering"),
+    "Task Decomposer": ("task_planning", "general_reasoning", "answer_integration"),
+    "Evidence Retriever": ("general_reasoning", "evidence_verification", "answer_integration"),
+    "Bridge Entity Reasoner": ("general_reasoning", "evidence_verification", "answer_integration"),
+    "Comparison & Composition Reasoner": ("formal_quantitative", "general_reasoning", "answer_integration"),
+    "General Evidence Solver": ("general_reasoning", "natural_science", "social_legal_business", "humanities_behavioral", "answer_integration"),
+    "Evidence Verifier": ("evidence_verification", "general_reasoning"),
+    "Answer Integrator": ("answer_integration", "general_reasoning", "evidence_verification"),
+    "Recovery Strategist": ("task_planning", "evidence_verification", "answer_integration"),
+    "Media Analyst": ("general_reasoning", "evidence_verification", "answer_integration"),
+    "Python Data Analyst": ("computing_engineering", "formal_quantitative", "evidence_verification"),
+    "Spreadsheet Analyst": ("computing_engineering", "formal_quantitative", "evidence_verification", "answer_integration"),
+}
+
+MMLU_DOMAIN_TASK_CAPABILITY_SCOPES = {
+    "GSM-Hard": ("formal_quantitative", "general_reasoning", "task_planning", "evidence_verification", "answer_integration", "stop_decision"),
+    "gsm-hard": ("formal_quantitative", "general_reasoning", "task_planning", "evidence_verification", "answer_integration", "stop_decision"),
+    "MMLU-Pro": ("task_planning", "formal_quantitative", "natural_science", "computing_engineering", "social_legal_business", "humanities_behavioral", "general_reasoning", "evidence_verification", "answer_integration", "stop_decision"),
+    "SRDD": ("computing_engineering", "general_reasoning", "task_planning", "evidence_verification", "answer_integration", "stop_decision"),
+    "CW": ("humanities_behavioral", "general_reasoning", "evidence_verification", "answer_integration", "stop_decision"),
+}
+
+
+if ACTIVE_CAPABILITY_SCHEMA == "legacy_v1":
+    ROLE_CAPABILITY_SCOPES = LEGACY_ROLE_CAPABILITY_SCOPES
+    TASK_CAPABILITY_SCOPES = LEGACY_TASK_CAPABILITY_SCOPES
+else:
+    ROLE_CAPABILITY_SCOPES = MMLU_DOMAIN_ROLE_CAPABILITY_SCOPES
+    TASK_CAPABILITY_SCOPES = MMLU_DOMAIN_TASK_CAPABILITY_SCOPES
 
 def relevant_capabilities(role_name: str, task_type: str) -> tuple[str, ...]:
     role_scope = ROLE_CAPABILITY_SCOPES.get(role_name)

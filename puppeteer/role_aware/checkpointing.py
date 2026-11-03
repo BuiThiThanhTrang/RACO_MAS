@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import random
+import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -12,7 +13,10 @@ import numpy as np
 import torch
 
 
-CHECKPOINT_SCHEMA_VERSION = "1.0"
+# Capability means still have ten positions, but their semantic meaning changed
+# in mmlu_domain_v1.  Bump this version so old policy weights cannot be loaded
+# silently against the redesigned profiles.
+CHECKPOINT_SCHEMA_VERSION = "1.0" if os.environ.get("PUPPETEER_CAPABILITY_SCHEMA", "mmlu_domain_v1").strip().lower() == "legacy_v1" else "2.0"
 TASK_MANIFEST_NAMES = {
     "gsm-hard": "gsm_hard",
     "MMLU-Pro": "mmlu_pro",
