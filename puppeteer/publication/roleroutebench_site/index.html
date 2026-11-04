@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore RoleRouteBench live multi-agent routing trajectories, JEV reference results, and the public/private isolation protocol.">
+  <meta name="theme-color" content="#08111f">
+  <title>RoleRouteBench — Dynamic role routing, made inspectable</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Dataset",
+    "name": "RoleRouteBench",
+    "alternateName": "RoutingBench V4-beta",
+    "description": "A reproducible multi-domain benchmark for dynamic role routing in multi-agent systems, with 82 live trajectories across four domains.",
+    "identifier": "https://doi.org/10.57967/hf/11430",
+    "url": "https://huggingface.co/datasets/TrangBui/RoleRouteBench",
+    "version": "4.0.0-beta.2",
+    "creator": {"@type": "Person", "name": "Trang Bui"},
+    "license": "https://huggingface.co/datasets/TrangBui/RoleRouteBench/blob/main/LICENSE_DATA",
+    "sameAs": [
+      "https://doi.org/10.57967/hf/11430",
+      "https://huggingface.co/datasets/TrangBui/RoleRouteBench",
+      "https://github.com/BuiThiThanhTrang/RACO_MAS"
+    ],
+    "keywords": ["multi-agent systems", "dynamic routing", "agent orchestration", "tool use", "benchmark", "live trajectories"]
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="RoleRouteBench home">
+      <span class="brand-mark">RR</span>
+      <span>RoleRouteBench</span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a href="#results">Results</a>
+      <a href="#explorer">Explorer</a>
+      <a href="#isolation">Isolation</a>
+      <a href="#submit">Submit</a>
+    </nav>
+    <a class="header-link" href="https://huggingface.co/datasets/TrangBui/RoleRouteBench">Dataset ↗</a>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-copy">
+        <p class="eyebrow">Frozen environment · live consequences · multi-step tasks</p>
+        <h1>Dynamic role routing,<br><span>made inspectable.</span></h1>
+        <p class="hero-lede">RoleRouteBench evaluates whether a decision model can coordinate specialized executors across evolving task states—not merely whether the final answer happens to be correct.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#explorer">Explore trajectories</a>
+          <a class="button secondary" href="https://doi.org/10.57967/hf/11430">DOI 10.57967/hf/11430 ↗</a>
+        </div>
+      </div>
+      <div class="route-card" aria-label="Illustrative routing trajectory">
+        <div class="route-card-head"><span>packet / live state</span><span class="live-dot">LIVE</span></div>
+        <div class="route-step"><span class="step-index">01</span><div><strong>Inspect evidence</strong><small>state changed</small></div><span class="status success">success</span></div>
+        <div class="route-line"></div>
+        <div class="route-step"><span class="step-index">02</span><div><strong>Author candidate</strong><small>artifact created</small></div><span class="status success">success</span></div>
+        <div class="route-line warning"></div>
+        <div class="route-step"><span class="step-index">03</span><div><strong>Execute candidate</strong><small>failure preserved</small></div><span class="status failed">failed</span></div>
+        <div class="route-line"></div>
+        <div class="route-step"><span class="step-index">04</span><div><strong>Diagnose & repair</strong><small>new routed action</small></div><span class="status success">success</span></div>
+      </div>
+    </section>
+
+    <section class="stats" aria-label="Benchmark summary">
+      <div><strong>82</strong><span>live trajectories</span></div>
+      <div><strong>4</strong><span>task domains</span></div>
+      <div><strong>568</strong><span>primary decisions</span></div>
+      <div><strong>33</strong><span>specialized roles</span></div>
+    </section>
+
+    <section class="section why">
+      <div class="section-kicker">Why RoleRouteBench?</div>
+      <div class="why-grid">
+        <h2>Final task success cannot tell you whether a router coordinated well.</h2>
+        <div class="why-copy">
+          <p>Outcome quality also depends on the frozen executor. RoleRouteBench therefore retains every routing decision, failed action, state transition, budget event, and independent evaluator result.</p>
+          <p>Competing routers see the same public state, role pool, adapters, executors, budgets, and evaluator. The environment stays fixed; only the routing policy changes.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="results">
+      <div class="section-heading">
+        <div><div class="section-kicker">Reference system</div><h2>JEV 1.13 results</h2></div>
+        <p>Reference signals for environment validation—not an oracle and not a composite leaderboard score.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Domain</th><th>Packets</th><th>Trajectory pass</th><th>Trusted task pass</th><th>Primary decisions</th><th>Budget-suppressed</th></tr></thead>
+          <tbody id="results-body"><tr><td colspan="6">Loading reference results…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section explorer-section" id="explorer">
+      <div class="section-heading">
+        <div><div class="section-kicker">Trajectory explorer</div><h2>Follow each routed consequence</h2></div>
+        <p>Filter public compact traces. Raw prompts and executor outputs are not included.</p>
+      </div>
+      <div class="filters" aria-label="Trajectory filters">
+        <label>Domain<select id="domain-filter"><option value="">All domains</option></select></label>
+        <label>Packet<select id="packet-filter"></select></label>
+        <label>Role<select id="role-filter"><option value="">All roles</option></select></label>
+        <label>Event status<select id="status-filter"><option value="">All statuses</option></select></label>
+      </div>
+      <div class="packet-summary" id="packet-summary" aria-live="polite"></div>
+      <div class="trajectory" id="trajectory" aria-live="polite"></div>
+    </section>
+
+    <section class="section isolation-section" id="isolation">
+      <div class="section-heading">
+        <div><div class="section-kicker">Evaluation boundary</div><h2>Public/private isolation by construction</h2></div>
+        <p>“Private” means evaluator-only under the benchmark protocol; the artifacts remain downloadable for transparent reproduction.</p>
+      </div>
+      <div class="isolation-grid">
+        <div class="boundary public-boundary">
+          <span class="boundary-label">ROUTER + EXECUTOR VISIBLE</span>
+          <h3>Public state</h3>
+          <ul><li>Task and public artifacts</li><li>Full role pool plus STOP</li><li>Prior observable consequences</li><li>Remaining call budget</li></ul>
+        </div>
+        <div class="boundary-flow" aria-hidden="true"><span>route</span><b>→</b><span>execute</span><b>→</b><span>observe</span></div>
+        <div class="boundary private-boundary">
+          <span class="boundary-label">EVALUATOR ONLY</span>
+          <h3>Reference state</h3>
+          <ul><li>Gold patches and proofs</li><li>Answer workbooks and oracles</li><li>Trusted evaluator results</li><li>Track A labels</li></ul>
+        </div>
+      </div>
+      <p class="boundary-note">The evaluator runs only after termination. It does not feed private artifacts back into the trajectory.</p>
+    </section>
+
+    <section class="section submit-section" id="submit">
+      <div>
+        <div class="section-kicker">Community evaluation</div>
+        <h2>Bring your own router.</h2>
+        <p>JEV is the reference system. Submit reproducible results from another decision model under the frozen environment—without sending us your model.</p>
+      </div>
+      <div class="submit-actions">
+        <a class="button primary" href="https://github.com/BuiThiThanhTrang/RACO_MAS/issues/new?template=router-result.yml">Submit router results ↗</a>
+        <a class="button secondary" href="https://github.com/BuiThiThanhTrang/RACO_MAS/blob/main/puppeteer/CONTRIBUTING_ROUTER_RESULTS.md">Read the protocol ↗</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div><strong>RoleRouteBench</strong><span>Version 4.0.0-beta.2 · DOI 10.57967/hf/11430</span></div>
+    <div class="footer-links"><a href="https://huggingface.co/datasets/TrangBui/RoleRouteBench">Dataset</a><a href="https://github.com/BuiThiThanhTrang/RACO_MAS">Code</a><a href="https://doi.org/10.57967/hf/11430">DOI</a></div>
+  </footer>
+  <script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+name: Add a router result
+description: Submit a reproducible RoleRouteBench router evaluation.
+title: "[Router result]: "
+labels: ["router-result"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for evaluating a router on RoleRouteBench. Results must use the frozen beta.2 dataset and code revisions and must keep evaluator-only artifacts hidden during routing.
+  - type: input
+    id: router
+    attributes:
+      label: Router and version
+      placeholder: ExampleRouter 1.0
+    validations:
+      required: true
+  - type: input
+    id: artifact
+    attributes:
+      label: Public result bundle
+      description: Stable URL containing result JSON, raw traces, configuration, and reproduction instructions.
+      placeholder: https://...
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Router implementation revision
+      placeholder: Repository URL and commit SHA
+    validations:
+      required: true
+  - type: checkboxes
+    id: freeze
+    attributes:
+      label: Frozen-environment declaration
+      options:
+        - label: I used dataset revision `cdc67bad1458f6b939f759e3f764f2e93612f424`.
+          required: true
+        - label: I used code revision `ee21943c3594c97f51f2082d0671dde44b7d2eb2` without changing the frozen runtime, adapters, packets, executors, budgets, role cards, or evaluator.
+          required: true
+        - label: The router did not receive evaluator-only artifacts, private packet files, or labels.
+          required: true
+        - label: Failed and invalid actions remain visible in the submitted traces.
+          required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Infrastructure notes and reruns
+      description: List affected episodes and the reason for every rerun. Write “None” if not applicable.
+    validations:
+      required: true

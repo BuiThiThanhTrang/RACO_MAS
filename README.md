@@ -3,6 +3,12 @@
 
 Instead of static structures, our framework uses a centralized orchestrator (“puppeteer”) that dynamically directs multiple agents (“puppets”) based on evolving task states. The orchestrator is trained with reinforcement learning to sequence and prioritize agents, enabling flexible and adaptive collective reasoning.
 
+> **RoleRouteBench is now public.** The frozen `4.0.0-beta.2` release contains
+> 82 live multi-agent routing trajectories across four domains. Explore the
+> [dataset](https://huggingface.co/datasets/TrangBui/RoleRouteBench), cite
+> [DOI 10.57967/hf/11430](https://doi.org/10.57967/hf/11430), or read the
+> [router-submission protocol](puppeteer/CONTRIBUTING_ROUTER_RESULTS.md).
+
 ![framework](assets/framework.png "Multi-Agent Collaboration via Evolving Orchestration")
 
 # Quick Start

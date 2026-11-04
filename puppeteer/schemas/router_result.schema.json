@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buithithanhtrang.github.io/RoleRouteBench/router-result.schema.json",
+  "title": "RoleRouteBench router result",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "router_name",
+    "router_version",
+    "dataset_revision",
+    "code_revision",
+    "domain_results",
+    "artifact_url"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "router_name": {"type": "string", "minLength": 1},
+    "router_version": {"type": "string", "minLength": 1},
+    "router_description": {"type": "string"},
+    "dataset_revision": {
+      "const": "cdc67bad1458f6b939f759e3f764f2e93612f424"
+    },
+    "code_revision": {
+      "const": "ee21943c3594c97f51f2082d0671dde44b7d2eb2"
+    },
+    "artifact_url": {"type": "string", "format": "uri"},
+    "contact": {"type": "string"},
+    "domain_results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "domain",
+          "packet_count",
+          "trajectory_passed",
+          "independent_end_task_passed",
+          "primary_routing_decisions",
+          "raw_routing_decisions",
+          "suppressed_by_budget"
+        ],
+        "properties": {
+          "domain": {
+            "enum": [
+              "database_migration_integrity",
+              "code_debugging",
+              "formal_proof",
+              "structured_data_processing"
+            ]
+          },
+          "packet_count": {"type": "integer", "minimum": 1},
+          "trajectory_passed": {"type": "integer", "minimum": 0},
+          "independent_end_task_passed": {"type": "integer", "minimum": 0},
+          "primary_routing_decisions": {"type": "integer", "minimum": 0},
+          "raw_routing_decisions": {"type": "integer", "minimum": 0},
+          "suppressed_by_budget": {"type": "integer", "minimum": 0},
+          "infrastructure_affected": {"type": "integer", "minimum": 0}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

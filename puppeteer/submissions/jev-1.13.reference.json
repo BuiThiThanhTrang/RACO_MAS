@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "router_name": "JEV",
+  "router_version": "typesafe/jev-1.13",
+  "router_description": "Reference router published with RoleRouteBench beta.2.",
+  "dataset_revision": "cdc67bad1458f6b939f759e3f764f2e93612f424",
+  "code_revision": "ee21943c3594c97f51f2082d0671dde44b7d2eb2",
+  "artifact_url": "https://huggingface.co/datasets/TrangBui/RoleRouteBench",
+  "contact": "TrangBui on Hugging Face",
+  "domain_results": [
+    {"domain": "database_migration_integrity", "packet_count": 12, "trajectory_passed": 6, "independent_end_task_passed": 7, "primary_routing_decisions": 84, "raw_routing_decisions": 90, "suppressed_by_budget": 6, "infrastructure_affected": 0},
+    {"domain": "code_debugging", "packet_count": 20, "trajectory_passed": 12, "independent_end_task_passed": 12, "primary_routing_decisions": 143, "raw_routing_decisions": 151, "suppressed_by_budget": 8, "infrastructure_affected": 0},
+    {"domain": "formal_proof", "packet_count": 30, "trajectory_passed": 17, "independent_end_task_passed": 18, "primary_routing_decisions": 185, "raw_routing_decisions": 198, "suppressed_by_budget": 13, "infrastructure_affected": 0},
+    {"domain": "structured_data_processing", "packet_count": 20, "trajectory_passed": 2, "independent_end_task_passed": 1, "primary_routing_decisions": 156, "raw_routing_decisions": 174, "suppressed_by_budget": 18, "infrastructure_affected": 0}
+  ]
+}

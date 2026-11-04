@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use RoleRouteBench or its reference implementation, please cite the dataset release."
+title: "RoleRouteBench: A Reproducible Multi-Domain Environment for Evaluating Dynamic Multi-Agent Routing"
+type: dataset
+version: 4.0.0-beta.2
+doi: 10.57967/hf/11430
+authors:
+  - family-names: Bui
+    given-names: Trang
+date-released: 2026-11-04
+repository-code: https://github.com/BuiThiThanhTrang/RACO_MAS
+url: https://huggingface.co/datasets/TrangBui/RoleRouteBench
+abstract: >-
+  RoleRouteBench evaluates dynamic role routing and multi-agent orchestration
+  on multi-step tasks. Version 4.0.0-beta.2 publishes 82 live trajectories
+  across database migration and integrity, code debugging, formal proof, and
+  structured data processing, together with frozen role pools, packet
+  artifacts, evaluator-only references, provenance, and JEV reference results.
+keywords:
+  - multi-agent systems
+  - agent routing
+  - dynamic routing
+  - agent orchestration
+  - tool use
+  - language model evaluation
