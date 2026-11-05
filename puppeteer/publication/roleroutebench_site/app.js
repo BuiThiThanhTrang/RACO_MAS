@@ -4,7 +4,7 @@ const esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({"&":"
 const percent = (part, total) => total ? `${Math.round(part * 100 / total)}%` : "—";
 
 async function loadData() {
-  const response = await fetch("data/benchmark.json");
+  const response = await fetch("benchmark.json");
   if (!response.ok) throw new Error(`data request failed (${response.status})`);
   return response.json();
 }
