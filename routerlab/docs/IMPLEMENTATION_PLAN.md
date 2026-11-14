@@ -21,7 +21,7 @@ initial and final artifacts.
 ## 2. Implementation phases
 
 1. **Isolation and contracts**
-   - Create the standalone `routerlab` package with no Puppeteer import.
+   - Create the standalone `routerlab` package with no legacy-framework dependency.
    - Define typed task, code, feedback, routing-state, decision, budget, trace, and
      result contracts.
    - Validate the exact executor/action set.
@@ -68,7 +68,7 @@ initial and final artifacts.
 
 ## 3. Acceptance criteria
 
-- `routerlab` contains no import or runtime dependency on `puppeteer`.
+- `routerlab` contains no import or runtime dependency on the previous framework.
 - A router cannot request tests or access Plus-Test information.
 - Every changed code hash is Base-tested automatically.
 - E1, E2, E3-heuristic, and E3-model run from separate versioned YAML configs.

@@ -200,12 +200,7 @@ node_modules/
 /WareHouse/
 /logs/
 /output/
-/puppeteer/cache/
-/puppeteer/checkpoint/
-/puppeteer/logs/
-/puppeteer/results/
-/puppeteer/runs/
-/puppeteer/docs/run.txt
+/runs/
 
 # PyPI configuration file
 .pypirc
@@ -227,8 +222,3 @@ yaml_instance/
 tmp/
 
 /data/
-
-# Keep deterministic split manifests, but ignore downloaded/raw task data.
-/puppeteer/data/*
-!/puppeteer/data/splits/
-!/puppeteer/data/splits/**

@@ -1,8 +1,7 @@
 # Dynamic Router Lab
 
 `routerlab` is a standalone research codebase for measuring dynamic executor routing
-in a multi-agent code-generation system. It is independent of the legacy Puppeteer
-package in the parent repository.
+in a multi-agent code-generation system.
 
 The initial benchmark is MBPP+ through EvalPlus. All expert roles use the same SLM
 backbone by default: `Qwen/Qwen2.5-Coder-3B-Instruct`.
