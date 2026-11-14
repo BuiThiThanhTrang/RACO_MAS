@@ -18,6 +18,11 @@ from routing_benchmark.v4.execution.registry import live_adapter_for_manifest
 from routing_benchmark.v4.execution.shared_actor import SharedRoleActor
 from routing_benchmark.v4.execution.runtime import resolve_runtime
 from routing_benchmark.v4.execution.shared_runner import SharedTrajectoryRunner, write_jsonl
+from routing_benchmark.v4.execution.table_qa_policy import (
+    TableQAFixedPolicy,
+    TableQAPredefinedPolicy,
+    TableQASingleAgentPolicy,
+)
 
 
 def source_hashes(packet_root):
@@ -42,6 +47,12 @@ def build_router(configuration,seed):
         raise ValueError('observable_rejection_guard_enabled must be a boolean')
     if kind=='random':
         return RandomRouter(seed)
+    if kind==TableQAFixedPolicy.name:
+        return TableQAFixedPolicy()
+    if kind==TableQAPredefinedPolicy.name:
+        return TableQAPredefinedPolicy()
+    if kind==TableQASingleAgentPolicy.name:
+        return TableQASingleAgentPolicy()
     if kind=='decision':
         return DecisionModelRouter(config,orchestration_profile=profile,observable_rejection_guard_enabled=guard)
     raise ValueError('Unknown router adapter type')

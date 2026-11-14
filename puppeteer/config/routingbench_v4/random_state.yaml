@@ -1,0 +1,9 @@
+seed: 42
+output_dir: runs
+benchmark:
+  data_dir: data/RoutingBench/v4_alpha
+  split: all
+  track: all
+  memory_view: state
+router:
+  type: random

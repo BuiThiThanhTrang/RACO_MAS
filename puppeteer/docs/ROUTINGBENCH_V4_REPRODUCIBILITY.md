@@ -1,4 +1,7 @@
-# RoutingBench V4 Track B: Reproduction and Runtime Certification
+# RoleRouteBench Track B: Reproduction and Runtime Certification
+
+RoleRouteBench is the canonical public name. `RoutingBench V4-beta` remains a
+historical development alias for the frozen beta.2 runtime and local paths.
 
 This document reproduces the four-domain Track B beta release while preserving
 the exact runtime that produced the published live trajectories.  The release
@@ -18,10 +21,13 @@ Keep three revisions in every reported experiment:
    locks and this documentation.  This revision may advance without changing
    the execution revision, provided the runtime checksum remains identical.
 
-The downloader is pinned by default to dataset commit
-`cdc67bad1458f6b939f759e3f764f2e93612f424` in
-`TrangBui/RoutingBench-V4`.  Record a newer immutable commit explicitly if the
-published release is updated.
+The downloader is pinned by default to the latest publication commit
+`b70803c339a19c767fe9f0718c5218f51d4ed130` in
+`TrangBui/RoleRouteBench`. The frozen Track B data first appeared at
+`cdc67bad1458f6b939f759e3f764f2e93612f424`; the later commit updates
+publication, DOI and discovery metadata without changing the frozen runtime or
+as-run trajectories. The DOI snapshot remains
+`bd936a4b61500e374837702ca08ac631950b2f96`.
 
 ## What is and is not frozen
 
@@ -94,8 +100,8 @@ The downloader refuses to overwrite an existing directory.  From `puppeteer`:
 
 ```powershell
 python scripts/download_routingbench_v4.py `
-  --repo-id TrangBui/RoutingBench-V4 `
-  --revision cdc67bad1458f6b939f759e3f764f2e93612f424 `
+  --repo-id TrangBui/RoleRouteBench `
+  --revision b70803c339a19c767fe9f0718c5218f51d4ed130 `
   --output data/RoutingBench/v4_beta_4d_82_20261102
 ```
 

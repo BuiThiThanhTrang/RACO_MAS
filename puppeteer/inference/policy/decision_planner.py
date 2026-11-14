@@ -172,6 +172,10 @@ class DecisionPlannerPolicy(Policy):
                 "only_listed_candidates_are_valid": True,
             },
         }
+        if self.routing_harness.enabled and self.routing_harness.prompt_guidance:
+            state["constraints"]["routing_guidance"] = list(
+                self.routing_harness.prompt_guidance
+            )
         if self.routing_harness.enabled and self.routing_harness.typed_blackboard:
             state["blackboard"] = self.routing_harness.blackboard(
                 task=global_info.task,
@@ -216,6 +220,15 @@ class DecisionPlannerPolicy(Policy):
                 "type": "noul",
                 "instructions": (
                     "Do the current candidates or evidence fragments materially conflict?"
+                ),
+            },
+            "independent_branch_warranted": {
+                "type": "noul",
+                "instructions": (
+                    "Would opening an additional path pursue a materially different "
+                    "hypothesis or independent evidence source that the current path "
+                    "cannot resolve efficiently? Answer no for a single explicit "
+                    "NEEDS_EVIDENCE handoff that can be continued on the current path."
                 ),
             },
             "progress_since_previous_step": {
@@ -571,7 +584,7 @@ class DecisionPlannerPolicy(Policy):
         require_candidate_before_stop = (
             bool(routing_snapshot.state.get("enabled", False))
             and str(routing_snapshot.state.get("profile", "")).startswith(
-                ("gaia_", "musique_")
+                ("gaia_", "musique_", "mmlu_")
             )
         )
         if "terminal_ready" in routing_snapshot.state:

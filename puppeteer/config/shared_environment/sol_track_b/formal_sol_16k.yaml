@@ -1,0 +1,23 @@
+packet_root: data/RoutingBench/v4_beta_4d_82_20261102
+output_root: runs
+domain: formal_proof
+role_cards: data/RoutingBench/v4_beta_4d_82_20261102/agent_pools/formal_proof.json
+lean_cache: ../.routingbench_lean_cache
+seed: 42
+max_calls: 8
+workers: 2
+router:
+  type: llm
+  model: gpt-6-sol-openrouter
+  orchestration_profile: structured
+  reasoning_effort: low
+  max_repair_attempts: 1
+  observable_rejection_guard_enabled: false
+executor:
+  provider: huggingface
+  model: Goedel-LM/Goedel-Prover-V2-8B:featherless-ai
+  api_key_env: HF_TOKEN
+  max_tokens: 16384
+  timeout_seconds: 300
+  transport_retries: 5
+  max_tool_calls: 3

@@ -1,0 +1,20 @@
+seed: 42
+output_dir: runs
+
+benchmark:
+  data_dir: data/RoutingBench/v3_alpha
+  split: development
+  track: a
+
+router:
+  type: llm
+  provider: openrouter
+  model: gpt-6-sol-openrouter
+  orchestration_profile: structured
+  reasoning_effort: low
+  max_repair_attempts: 1
+
+execution:
+  mode: live
+  actor_model: qwen-3.5-9b
+  max_output_attempts: 2

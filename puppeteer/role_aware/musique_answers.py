@@ -16,6 +16,29 @@ from typing import Any, Iterable, Mapping
 _FINAL_KEYS = ("final_answer",)
 _CANDIDATE_KEYS = ("corrected_answer", "candidate_answer")
 _INTERMEDIATE_KEYS = ("intermediate_answer",)
+_STATUS_KEYS = ("status",)
+_MISSING_SUBQUESTION_KEYS = ("missing_subquestion", "unresolved_subquestion")
+_CONFLICT_KEYS = ("conflict_description", "conflict", "conflicting_evidence")
+_SUPPORT_KEYS = (
+    "supporting_paragraph_ids",
+    "supporting_paragraph_indices",
+    "support_paragraph_ids",
+    "support_ids",
+)
+_VALID_STATUSES = {
+    "FINAL",
+    "CANDIDATE",
+    "NEEDS_EVIDENCE",
+    "CONFLICT",
+    "NO_ANSWER",
+    "MALFORMED",
+}
+_EXPLICIT_NONFINAL_STATUSES = {
+    "NEEDS_EVIDENCE",
+    "CONFLICT",
+    "NO_ANSWER",
+    "MALFORMED",
+}
 _INVALID_ANSWERS = {
     "",
     "null",
@@ -55,6 +78,11 @@ class MusiqueAnswerFields:
     intermediate_answer: str = ""
     final_source: str | None = None
     candidate_source: str | None = None
+    status: str = "NO_ANSWER"
+    status_source: str | None = None
+    missing_subquestion: str = ""
+    conflict_description: str = ""
+    supporting_paragraph_ids: tuple[int, ...] = ()
 
     @property
     def has_final(self) -> bool:
@@ -63,6 +91,14 @@ class MusiqueAnswerFields:
     @property
     def has_candidate(self) -> bool:
         return bool(self.candidate_answer or self.final_answer)
+
+    @property
+    def status_explicit(self) -> bool:
+        return self.status_source is not None
+
+    @property
+    def explicit_nonfinal(self) -> bool:
+        return self.status_explicit and self.status in _EXPLICIT_NONFINAL_STATUSES
 
 
 def _scalar(value: Any) -> str:
@@ -115,7 +151,11 @@ def canonicalize_answer_value(value: Any, *, strict_final: bool = False) -> str:
     text = _strip_citations(text)
     text = text.strip().strip('"\'').strip()
     normalized = " ".join(text.casefold().split())
-    if normalized in _INVALID_ANSWERS:
+    # These are protocol sentinels, not semantic answer normalization.  Accept
+    # harmless trailing punctuation so adapter artifacts such as ``null,`` can
+    # never become a candidate answer.
+    normalized_sentinel = normalized.strip().rstrip(".,;:").strip()
+    if normalized_sentinel in _INVALID_ANSWERS:
         return ""
     if any(marker in normalized for marker in _REFUSAL_MARKERS):
         return ""
@@ -152,15 +192,19 @@ def _json_payloads(text: str) -> Iterable[Any]:
             continue
         except (TypeError, ValueError, json.JSONDecodeError):
             pass
-        for index, character in enumerate(candidate):
+        index = 0
+        while index < len(candidate):
+            character = candidate[index]
             if character not in "{[":
+                index += 1
                 continue
             try:
-                payload, _ = decoder.raw_decode(candidate[index:])
+                payload, consumed = decoder.raw_decode(candidate[index:])
             except (TypeError, ValueError, json.JSONDecodeError):
+                index += 1
                 continue
             yield payload
-            break
+            index += max(consumed, 1)
 
 
 def _find_values(payload: Any, keys: tuple[str, ...]) -> list[tuple[str, Any]]:
@@ -196,6 +240,48 @@ def _first_valid(
     return "", None
 
 
+def _normalize_status(value: Any) -> str:
+    normalized = re.sub(r"[^A-Z0-9]+", "_", _scalar(value).upper()).strip("_")
+    aliases = {
+        "ANSWER": "FINAL",
+        "FINAL_ANSWER": "FINAL",
+        "NEED_EVIDENCE": "NEEDS_EVIDENCE",
+        "MISSING_EVIDENCE": "NEEDS_EVIDENCE",
+        "INSUFFICIENT_EVIDENCE": "NEEDS_EVIDENCE",
+        "UNRESOLVED": "NEEDS_EVIDENCE",
+        "NOANSWER": "NO_ANSWER",
+        "INVALID": "MALFORMED",
+    }
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in _VALID_STATUSES else ""
+
+
+def _first_status(values: Iterable[tuple[str, Any]]) -> tuple[str, str | None]:
+    # Prefer the last explicit status. Outputs occasionally contain an earlier
+    # draft object followed by the agent's committed structured object.
+    resolved = [(status, source) for source, value in values if (status := _normalize_status(value))]
+    return resolved[-1] if resolved else ("", None)
+
+
+def _first_text(values: Iterable[tuple[str, Any]], *, limit: int = 600) -> str:
+    for _, value in reversed(list(values)):
+        text = _scalar(value)
+        if text:
+            return " ".join(text.split())[:limit]
+    return ""
+
+
+def _support_ids(values: Iterable[tuple[str, Any]]) -> tuple[int, ...]:
+    identifiers: set[int] = set()
+    for _, value in values:
+        candidates = value if isinstance(value, (list, tuple, set)) else re.findall(r"\d+", str(value or ""))
+        for candidate in candidates:
+            match = re.search(r"\d+", str(candidate))
+            if match:
+                identifiers.add(int(match.group(0)))
+    return tuple(sorted(identifiers))
+
+
 def parse_musique_output(text: Any) -> MusiqueAnswerFields:
     raw = "" if text is None else str(text).strip()
     if not raw:
@@ -205,13 +291,25 @@ def parse_musique_output(text: Any) -> MusiqueAnswerFields:
     final_values: list[tuple[str, Any]] = []
     candidate_values: list[tuple[str, Any]] = []
     intermediate_values: list[tuple[str, Any]] = []
+    status_values: list[tuple[str, Any]] = []
+    missing_values: list[tuple[str, Any]] = []
+    conflict_values: list[tuple[str, Any]] = []
+    support_values: list[tuple[str, Any]] = []
     for payload in payloads:
         final_values.extend(_find_values(payload, _FINAL_KEYS))
         candidate_values.extend(_find_values(payload, _CANDIDATE_KEYS))
         intermediate_values.extend(_find_values(payload, _INTERMEDIATE_KEYS))
+        status_values.extend(_find_values(payload, _STATUS_KEYS))
+        missing_values.extend(_find_values(payload, _MISSING_SUBQUESTION_KEYS))
+        conflict_values.extend(_find_values(payload, _CONFLICT_KEYS))
+        support_values.extend(_find_values(payload, _SUPPORT_KEYS))
     final_values.extend(_labeled_values(raw, _FINAL_KEYS))
     candidate_values.extend(_labeled_values(raw, _CANDIDATE_KEYS))
     intermediate_values.extend(_labeled_values(raw, _INTERMEDIATE_KEYS))
+    status_values.extend(_labeled_values(raw, _STATUS_KEYS))
+    missing_values.extend(_labeled_values(raw, _MISSING_SUBQUESTION_KEYS))
+    conflict_values.extend(_labeled_values(raw, _CONFLICT_KEYS))
+    support_values.extend(_labeled_values(raw, _SUPPORT_KEYS))
 
     marker_values = re.findall(
         r"(?is)final\s+answer\s*:\s*(.*)", raw
@@ -239,15 +337,41 @@ def parse_musique_output(text: Any) -> MusiqueAnswerFields:
         candidate_values = [*final_values, *candidate_values]
     candidate_answer, candidate_source = _first_valid(candidate_values)
     intermediate_answer, _ = _first_valid(intermediate_values)
+    explicit_status, status_source = _first_status(status_values)
+    missing_subquestion = _first_text(missing_values)
+    conflict_description = _first_text(conflict_values)
+    supporting_paragraph_ids = _support_ids(support_values)
+
+    if explicit_status in _EXPLICIT_NONFINAL_STATUSES:
+        final_answer = ""
+        candidate_answer = ""
+        final_source = None
+        candidate_source = None
+    elif explicit_status == "CANDIDATE":
+        if not candidate_answer and final_answer:
+            candidate_answer, candidate_source = final_answer, final_source
+        final_answer = ""
+        final_source = None
+    elif explicit_status == "FINAL" and not final_answer and candidate_answer:
+        final_answer, final_source = candidate_answer, candidate_source
     if final_answer:
         candidate_answer = final_answer
         candidate_source = final_source
+    inferred_status = (
+        explicit_status
+        or ("FINAL" if final_answer else "CANDIDATE" if candidate_answer else "NO_ANSWER")
+    )
     return MusiqueAnswerFields(
         final_answer=final_answer,
         candidate_answer=candidate_answer,
         intermediate_answer=intermediate_answer,
         final_source=final_source,
         candidate_source=candidate_source,
+        status=inferred_status,
+        status_source=status_source,
+        missing_subquestion=missing_subquestion,
+        conflict_description=conflict_description,
+        supporting_paragraph_ids=supporting_paragraph_ids,
     )
 
 
@@ -256,7 +380,15 @@ def parse_musique_result(result: Any) -> MusiqueAnswerFields:
         return parse_musique_output(result)
     direct = {
         key: result.get(key)
-        for key in (*_FINAL_KEYS, *_CANDIDATE_KEYS, *_INTERMEDIATE_KEYS)
+        for key in (
+            *_FINAL_KEYS,
+            *_CANDIDATE_KEYS,
+            *_INTERMEDIATE_KEYS,
+            *_STATUS_KEYS,
+            *_MISSING_SUBQUESTION_KEYS,
+            *_CONFLICT_KEYS,
+            *_SUPPORT_KEYS,
+        )
         if result.get(key) is not None
     }
     text = "\n".join(

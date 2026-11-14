@@ -30,6 +30,7 @@ class SharedTrajectoryRunner:
         calls=0
         reason='CALL_LIMIT'
         stopped=False
+        progress_observation=getattr(adapter,'progress_observation',None)
         def persist():
             write_jsonl(output_dir/'trajectory.jsonl',events)
             write_jsonl(output_dir/'decision_states.jsonl',states)
@@ -41,6 +42,8 @@ class SharedTrajectoryRunner:
                 # Domain visibility contracts govern raw outputs, independently of router identity.
                 if 'result' in event and env.manifest.domain=='database_migration_integrity':
                     record['execution']={k:v for k,v in event['result'].items() if k not in ('requests','responses')}
+                if event.get('result',{}).get('contract_error'):
+                    record['contract_error']=event['result']['contract_error']
                 projected.append(record)
             return projected
         while calls<=self.max_calls:
@@ -88,6 +91,8 @@ class SharedTrajectoryRunner:
             print(f'[action] {env.manifest.base_workflow_id} {calls}/{self.max_calls} {action}',flush=True)
             try:
                 result=self.actor.execute(env=env,adapter=adapter,action=action,role_profile=role_map[action],task=env.manifest.task)
+                if result.get('contract_error'):
+                    adapter.record_contract_error(env,result['contract_error'])
             except RoleTransportError as error:
                 result={'status':'transport_error','error_type':error.cause_type,'http_status':error.http_status,
                         'failure_origin':'executor_service','raw_output':'','responses':[],'tool_events':[]}
@@ -95,9 +100,10 @@ class SharedTrajectoryRunner:
                 result={'status':'tool_failure','error_type':type(error).__name__,'failure_origin':'tool_environment',
                         'raw_output':'','responses':[],'tool_events':[]}
             after=adapter.public_observation(env)
+            progress_before,progress_after=(progress_observation(before),progress_observation(after)) if progress_observation else (before,after)
             events.append({'kind':'role_execution','decision_id':identifier,'agent_id':action,'status':result['status'],
                            'origin':'selected_agent','result':result,
-                           'semantic_delta':'state_changed' if canonical_hash(before)!=canonical_hash(after) else 'no_state_change',
+                           'semantic_delta':'state_changed' if canonical_hash(progress_before)!=canonical_hash(progress_after) else 'no_state_change',
                            'state_before_hash':canonical_hash(before),'state_after_hash':canonical_hash(after)})
             persist()
         persist()

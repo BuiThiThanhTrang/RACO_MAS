@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 
 from .adapters.common import read_json, write_json
+from .adapters.table_qa import ADAPTER_ID as TABLE_QA_ADAPTER_ID
 from .registry import adapter_for_manifest
 from ..artifacts.manifest import load_manifest
 from ..artifacts.schema import sha256_file
@@ -63,15 +64,19 @@ def audit_domain(folder, config, project):
     if not manifest_path.exists(): return {'passed':None,'status':'UNAVAILABLE','reason':'Manifest not found'}
     manifest=load_manifest(manifest_path)
     adapter=adapter_for_manifest(manifest)
-    adapter.configure_runtime(resolve_runtime(config,manifest_path,project))
+    table_qa = manifest.adapter_id == TABLE_QA_ADAPTER_ID
+    if not table_qa:
+        adapter.configure_runtime(resolve_runtime(config,manifest_path,project))
     target=folder/'evaluation/checker_workspace'
     # Re-evaluation is read-only with respect to the trajectory. Reuse a unique target.
     ordinal=0
     while target.exists():
         ordinal+=1; target=folder/f'evaluation/checker_workspace_{ordinal}'
     try:
-        env=adapter.materialize(manifest_path,target)
-        if domain=='formal_proof':
+        env=None if table_qa else adapter.materialize(manifest_path,target)
+        if table_qa:
+            report=adapter.final_audit(manifest_path,folder)
+        elif domain=='formal_proof':
             content=(folder/'workspace/public/Main.lean').read_text(encoding='utf-8')
             result=adapter.execute_tool(env,'write_source',{'content':content})
             if result.status!='success': return {'passed':False,'status':'FAIL','reason':'Immutable context/edit scope violated'}

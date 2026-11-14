@@ -1,0 +1,12 @@
+[
+  {
+    "agent_id": "Table QA Agent",
+    "role_goal": "Solve the table question end to end by inspecting public data, resolving headers, selecting evidence, calculating or composing a typed answer, verifying it, and diagnosing public failures when needed.",
+    "use_when": [
+      "The public verification state has not passed"
+    ],
+    "expected_outputs": [
+      "One valid tool call that advances the current public state toward a verified typed answer"
+    ]
+  }
+]

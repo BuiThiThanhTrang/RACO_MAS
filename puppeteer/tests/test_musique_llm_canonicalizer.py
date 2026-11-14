@@ -6,6 +6,7 @@ from role_aware.musique_llm_canonicalizer import (
     build_llm_canonicalization_input,
     canonicalize_with_llm,
     extract_runtime_answer_with_llm,
+    finalize_path_end_candidate_with_llm,
     original_question,
     validate_llm_extraction,
     validate_runtime_extraction,
@@ -147,6 +148,33 @@ class MusiqueLLMCanonicalizerTests(unittest.TestCase):
                 },
                 "The output only says ITF.",
             )
+
+    def test_path_end_gate_commits_only_existing_direct_answer_span(self):
+        captured = {}
+
+        def fake_query(model, messages, schema, **kwargs):
+            captured["messages"] = messages
+            return (
+                {
+                    "status": "FINAL",
+                    "answer": "Miquette Giraudy",
+                    "answer_quote": "Miquette Giraudy",
+                },
+                17,
+            )
+
+        result, tokens = finalize_path_end_candidate_with_llm(
+            "Candidate answer: Miquette Giraudy",
+            question="Who is the spouse of the Green performer?",
+            role="Evidence Verifier",
+            model="fake",
+            query_func=fake_query,
+        )
+
+        self.assertEqual(result["status"], "FINAL")
+        self.assertEqual(result["answer"], "Miquette Giraudy")
+        self.assertEqual(tokens, 17)
+        self.assertNotIn("gold", captured["messages"][1]["content"].casefold())
 
 
 if __name__ == "__main__":

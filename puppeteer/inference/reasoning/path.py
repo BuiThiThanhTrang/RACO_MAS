@@ -7,6 +7,7 @@ import shutil
 from agent.agent_session import PathRuntimeContext, bind_session
 from role_aware.audit_trace import digest, write_json
 from dataclasses import asdict
+from role_aware.musique_answers import parse_musique_result
 
 class ReasoningState(Enum):
     INITIALIZED = 1
@@ -22,7 +23,8 @@ class GraphReasoningPath:
                  action_graph, registry, frontier=None, agent_sequence=None, index=None,
                  global_info=None, state=ReasoningState.INITIALIZED, env=None, env_name=None,
                  policy=None, max_step_num=None, external_tools_enabled=False, role_adherence=None,
-                 audit=None, path_uid=None, parent_path_uid=None, context=None):
+                 audit=None, path_uid=None, parent_path_uid=None, context=None,
+                 recovery_depth_credit=0):
         self.state, self.index = state, index
         self.path_uid = path_uid or f"path-{index}"
         self.parent_path_uid = parent_path_uid
@@ -38,6 +40,10 @@ class GraphReasoningPath:
         self.agent_sequence = list(agent_sequence or [])
         self.role_adherence = dict(role_adherence or {})
         self.max_parallel_paths, self.max_step_num = max_parallel_paths, max_step_num
+        self.recovery_depth_credit = max(0, int(recovery_depth_credit or 0))
+        self.effective_max_step_num = int(max_step_num)
+        self.recovery_depth_active = False
+        self.recovery_depth_activated_at = None
         self.external_tools_enabled = external_tools_enabled
         self.current_agent = self.start_agent = start_agent
         self.next_agents = []
@@ -74,8 +80,40 @@ class GraphReasoningPath:
         self.state = ReasoningState.FINALIZING
         self.emit("path_finished", stop_reason=reason, decision_id=decision_id,
                   p_stop=p_stop, stop_probability_observed=p_stop is not None,
-                  steps_completed=self.completed_steps, depth_limit=self.max_step_num)
+                  steps_completed=self.completed_steps, depth_limit=self.max_step_num,
+                  effective_depth_limit=self.effective_max_step_num,
+                  recovery_depth_active=self.recovery_depth_active)
         return self.state
+
+    @property
+    def remaining_depth(self):
+        return max(0, self.effective_max_step_num - self.completed_steps)
+
+    def _maybe_activate_recovery_depth(self, result):
+        if (
+            self.recovery_depth_active
+            or self.recovery_depth_credit <= 0
+            or str(self.global_info.task.get("type", "")).casefold() != "musique"
+            or self.completed_steps < self.max_step_num - 1
+        ):
+            return
+        parsed = parse_musique_result(result)
+        if not (parsed.status_explicit and parsed.status == "NEEDS_EVIDENCE"):
+            return
+        self.recovery_depth_active = True
+        self.recovery_depth_activated_at = self.completed_steps
+        self.effective_max_step_num = max(
+            self.max_step_num,
+            self.completed_steps + self.recovery_depth_credit,
+        )
+        self.emit(
+            "recovery_depth_activated",
+            status=parsed.status,
+            activated_at_step=self.completed_steps,
+            base_depth_limit=self.max_step_num,
+            effective_depth_limit=self.effective_max_step_num,
+            credit=self.recovery_depth_credit,
+        )
 
     def reserve(self, agent, action_id, decision_id, assignment=None):
         self.current_agent = agent
@@ -119,6 +157,7 @@ class GraphReasoningPath:
         self.completed_steps += 1
         current_action.action_id = action_id
         self.global_info.update(current_action)
+        self._maybe_activate_recovery_depth(current_action.result)
         self.context.record_agent_turn(agent.hash)
         action_name = current_action.action.get("action")
         card = agent.role_card
@@ -150,7 +189,7 @@ class GraphReasoningPath:
                 last_teammate=agent.hash))
         if terminated:
             return self.finish("agent_terminated")
-        if self.completed_steps >= self.max_step_num:
+        if self.completed_steps >= self.effective_max_step_num:
             return self.finish("depth_limit")
         return self.state
 
@@ -169,6 +208,7 @@ class GraphReasoningPath:
                 agent_sequence=self.agent_sequence, index=index, global_info=info,
                 state=ReasoningState.ANSWERING, env=info.env, env_name=self.env_name,
                 policy=self.policy, max_step_num=self.max_step_num,
+                recovery_depth_credit=self.recovery_depth_credit,
                 external_tools_enabled=self.external_tools_enabled, role_adherence=self.role_adherence,
                 audit=self.audit, path_uid=path_uid, parent_path_uid=self.path_uid,
                 context=self.context.fork(path_uid))
@@ -182,6 +222,9 @@ class GraphReasoningPath:
             info.code_path = str(target)
         child.emit("path_created", inherited_steps=child.completed_steps,
                    inherited_action_ids=[getattr(a, "action_id", None) for a in info.workflow.workflow])
+        child.effective_max_step_num = self.effective_max_step_num
+        child.recovery_depth_active = self.recovery_depth_active
+        child.recovery_depth_activated_at = self.recovery_depth_activated_at
         return child
 
     def print_agent_sequence(self):

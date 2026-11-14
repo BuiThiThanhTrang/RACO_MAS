@@ -81,6 +81,35 @@ def _load_records(paths: Iterable[Path]) -> list[dict[str, Any]]:
                         "paper_compatible_support_source",
                     ):
                         record[name] = collaboration.get(name)
+                    if not (record.get("collaboration") or {}).get(
+                        "routing_diagnostics"
+                    ):
+                        record.setdefault("collaboration", {}).update(
+                            {
+                                "routing_diagnostics": collaboration.get(
+                                    "routing_diagnostics", {}
+                                )
+                            }
+                        )
+            elif not (record.get("collaboration") or {}).get(
+                "routing_diagnostics"
+            ):
+                trace_value = str(record.get("trace_path") or "").strip()
+                trace_path = Path(trace_value) if trace_value else None
+                candidates_path = trace_path / "candidates.json" if trace_path else None
+                evaluation_path = trace_path / "evaluation.json" if trace_path else None
+                if (
+                    candidates_path is not None
+                    and evaluation_path is not None
+                    and candidates_path.is_file()
+                    and evaluation_path.is_file()
+                ):
+                    snapshot = json.loads(candidates_path.read_text(encoding="utf-8"))
+                    evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
+                    refreshed = evaluate_musique_snapshot(snapshot, evaluation)
+                    record.setdefault("collaboration", {})[
+                        "routing_diagnostics"
+                    ] = refreshed.get("routing_diagnostics", {})
             record["_result_file"] = str(path)
             records.append(record)
     if not records:
@@ -123,6 +152,50 @@ def summarize_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             "contribution_by_role": dict(role_contributions.most_common()),
         }
     )
+    diagnostic_rows = [
+        (record.get("collaboration") or {}).get("routing_diagnostics") or {}
+        for record in records
+    ]
+    status_counts: Counter[str] = Counter()
+    final_answer_by_role: Counter[str] = Counter()
+    recovery_opportunities: Counter[str] = Counter()
+    recoveries: Counter[str] = Counter()
+    for row in diagnostic_rows:
+        status_counts.update(row.get("status_counts") or {})
+        final_answer_by_role.update(row.get("final_answer_by_role") or {})
+        recovery_opportunities.update(row.get("status_recovery_opportunities") or {})
+        recoveries.update(row.get("status_recoveries") or {})
+    collaboration["routing_diagnostics"] = {
+        "status_counts": dict(status_counts),
+        "false_terminal_null_count": sum(
+            int(row.get("false_terminal_null_count") or 0)
+            for row in diagnostic_rows
+        ),
+        "explicit_nonfinal_stop_count": sum(
+            int(row.get("explicit_nonfinal_stop_count") or 0)
+            for row in diagnostic_rows
+        ),
+        "recovery_branch_count": sum(
+            int(row.get("recovery_branch_count") or 0)
+            for row in diagnostic_rows
+        ),
+        "evidence_lineage_coverage": _mean(
+            row.get("evidence_lineage_coverage") for row in diagnostic_rows
+        ),
+        "status_recovery_opportunities": dict(recovery_opportunities),
+        "status_recoveries": dict(recoveries),
+        "needs_evidence_recovery_rate": (
+            recoveries["NEEDS_EVIDENCE"] / recovery_opportunities["NEEDS_EVIDENCE"]
+            if recovery_opportunities["NEEDS_EVIDENCE"]
+            else None
+        ),
+        "conflict_recovery_rate": (
+            recoveries["CONFLICT"] / recovery_opportunities["CONFLICT"]
+            if recovery_opportunities["CONFLICT"]
+            else None
+        ),
+        "final_answer_by_role": dict(final_answer_by_role),
+    }
     semantic_records = [
         record for record in records if record.get("semantic_correct") is not None
     ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from routing_benchmark.v4.artifacts.schema import ArtifactManifest
 from .adapters.database import DatabaseMigrationAdapter
 from .adapters.formal_proof import FormalProofAdapter
+from .adapters.table_qa import ADAPTER_ID as TABLE_QA_ADAPTER_ID, TableQAAdapter
 
 from .adapters import (
     CodeDebuggingAdapter,
@@ -24,6 +25,7 @@ ADAPTERS = {
     "transactional_service.v1": TransactionalServiceAdapter,
     "structured_data_processing.v1": StructuredDataProcessingAdapter,
     "spreadsheetbench.python_oj.v1": SpreadsheetBenchPythonOJAdapter,
+    TABLE_QA_ADAPTER_ID: TableQAAdapter,
     "cross_app_workflow.v1": CrossAppWorkflowAdapter,
     "code_debugging.v1": CodeDebuggingAdapter,
     "code_debugging.external.v1": ExternalCodeDebuggingAdapter,
@@ -41,6 +43,7 @@ LIVE_ADAPTER_IDS = frozenset(
         "database_migration.sqlite.v1",
         "formal_proof.lean4.v1",
         "spreadsheetbench.python_oj.v1",
+        TABLE_QA_ADAPTER_ID,
         "code_debugging.external.v1",
     }
 )

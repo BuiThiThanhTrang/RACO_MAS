@@ -236,3 +236,9 @@ tmp/
 !/puppeteer/data/splits/**
 
 /.venv311
+!/puppeteer/data/RoutingBench/
+!/puppeteer/data/RoutingBench/**
+/puppeteer/data/RoutingBench/*/reviews/*.sqlite
+/puppeteer/data/RoutingBench/*/reviews/*.sqlite-shm
+/puppeteer/data/RoutingBench/*/reviews/*.sqlite-wal
+/puppeteer/data/RoutingBench/*/reviews/backups/

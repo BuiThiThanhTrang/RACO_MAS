@@ -120,9 +120,13 @@ stored under `analysis/` as a sidecar and appear in a separate
 - Jev: `config/experiments/decision_musique_dynamic_jev_gemini.yaml`
 - Sol: `config/experiments/frozen_musique_dynamic_sol_gemini.yaml`
 
-Both use the Gemini 2.5 Flash actor pool, W2D5, the same dynamic guard, and the
+Both use the Gemini 2.5 Flash actor pool, W3D5, the same dynamic guard, and the
 same answer aggregation, gold-blind extraction fallback, and semantic outcome
 judge. Only the router changes.
+
+The current implementation adds status-aware recovery and evidence lineage.
+See `docs/musique_status_aware_recovery_vi.md` for the authoritative runtime
+contract, conditional branching rules, diagnostics, and updated run commands.
 
 Run Jev:
 

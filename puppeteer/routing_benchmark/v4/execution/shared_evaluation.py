@@ -45,3 +45,32 @@ def episode_metrics(decisions,events,labels=None):
         output['human_labeled_decisions']=len(scored)
         output['valid_action_accuracy']=sum(d['agent_id'] in labels[d['decision_id']] for d in scored)/len(scored) if scored else None
     return output
+
+
+def table_qa_metrics(states, decisions, events):
+    """Measure public progress and stopping opportunities from recorded observations."""
+    observations = [row["observation"] for row in states]
+    ready = next((i for i, row in enumerate(observations) if row["current_state"]["terminal"]), None)
+    final_stop = next((i for i, row in enumerate(decisions) if row["dispatch_status"] == "stop_handled"), None)
+    seen = set()
+    failure_before_ready = False
+    for i, row in enumerate(observations):
+        state = row["current_state"]
+        seen.update(item["kind"] for item in state["artifacts"].values())
+        if state["last_error"] and (ready is None or i < ready):
+            failure_before_ready = True
+    return {
+        "milestones": sorted(seen),
+        "ready_with_budget": any(row["current_state"]["terminal"] and row["budget"]["calls_remaining"] > 0
+                                 for row in observations),
+        "premature_stop_with_budget": bool(final_stop is not None and
+            not observations[final_stop]["current_state"]["terminal"] and
+            observations[final_stop]["budget"]["calls_remaining"] > 0),
+        "calls_after_first_ready": (
+            sum(row["dispatch_status"] in ("dispatched", "precondition_rejected") for row in decisions[ready:])
+            if ready is not None else None
+        ),
+        "public_failure_observed_before_ready": failure_before_ready,
+        "ready_after_public_failure": failure_before_ready and ready is not None,
+        "no_progress_role_calls": sum(event.get("status") == "no_progress" for event in events),
+    }

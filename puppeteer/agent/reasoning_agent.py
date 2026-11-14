@@ -274,6 +274,20 @@ class Reasoning_Agent(Agent):
             current_action.result["answer"] = (
                 parsed.final_answer or parsed.candidate_answer or ""
             )
+            if parsed.status_explicit:
+                current_action.result["status"] = parsed.status
+            if parsed.missing_subquestion:
+                current_action.result["missing_subquestion"] = (
+                    parsed.missing_subquestion
+                )
+            if parsed.conflict_description:
+                current_action.result["conflict_description"] = (
+                    parsed.conflict_description
+                )
+            if parsed.supporting_paragraph_ids:
+                current_action.result["supporting_paragraph_ids"] = list(
+                    parsed.supporting_paragraph_ids
+                )
             if parsed.final_answer:
                 current_action.result["final_answer"] = parsed.final_answer
                 if not global_info.answers or str(global_info.answers[-1]).strip() != parsed.final_answer:

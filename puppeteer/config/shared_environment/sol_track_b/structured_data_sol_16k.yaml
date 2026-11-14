@@ -1,0 +1,25 @@
+packet_root: data/RoutingBench/v4_beta_4d_82_20261102
+output_root: runs
+domain: structured_data_processing
+role_cards: data/RoutingBench/v4_beta_4d_82_20261102/agent_pools/structured_data_processing.json
+seed: 42
+max_calls: 8
+workers: 1
+runtime:
+  python_executable: C:/Users/23521/miniconda3/python.exe
+  candidate_timeout_seconds: 60
+router:
+  type: llm
+  model: gpt-6-sol-openrouter
+  orchestration_profile: structured
+  reasoning_effort: low
+  max_repair_attempts: 1
+  observable_rejection_guard_enabled: false
+executor:
+  provider: openrouter
+  model: qwen/qwen3.5-9b
+  api_key_env: OPENROUTER_API_KEY
+  max_tokens: 16384
+  timeout_seconds: 300
+  transport_retries: 5
+  max_tool_calls: 3

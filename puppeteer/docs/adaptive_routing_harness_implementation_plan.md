@@ -124,6 +124,14 @@ robustness. Recommended evaluation:
 - [x] Robustness comparison script.
 - [x] Jev/Sol config updates.
 - [x] Unit and regression verification (59 focused tests passed).
+- [x] Status-aware MuSiQue output contract and null-sentinel rejection.
+- [x] Evidence lineage across handoffs without requiring citations in the final artifact.
+- [x] `NEEDS_EVIDENCE`/`CONFLICT` recovery and stricter branch conditions.
+- [x] Role-agnostic final answers and last-valid-final path aggregation.
+- [x] Recovery and lineage diagnostics in the MuSiQue analyzer.
+
+The detailed Vietnamese implementation record is maintained in
+`docs/musique_status_aware_recovery_vi.md`.
 
 ## 7. Running the evaluation
 
@@ -158,8 +166,8 @@ subsets cannot silently distort the comparison.
 ## 8. Verification record
 
 - Both updated Jev and Sol YAML files pass runtime config validation.
-- 59 focused routing, planner, MuSiQue, and analyzer tests pass.
-- The full repository suite runs 215 tests: 205 pass and 10 pre-existing
+- 76 focused routing, planner, MuSiQue, canonicalizer, and analyzer tests pass.
+- The full repository suite runs 221 tests: 211 pass and 10 pre-existing
   train/baseline assertions fail. Those failures are unchanged from the baseline
   checkpoint and concern legacy REINFORCE test fixtures, an old split-size lock,
   missing evidence-scope entries for newly added roles, and a source-text count

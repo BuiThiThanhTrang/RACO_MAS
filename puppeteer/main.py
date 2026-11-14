@@ -158,6 +158,16 @@ def main():
     parser.add_argument("--index", type=int, default=-1)
     parser.add_argument("--data_limit", type=int, default=None)
     parser.add_argument("--data_start", type=int, default=None)
+    parser.add_argument(
+        "--retry_failed_from",
+        type=str,
+        default=None,
+        help=(
+            "MuSiQue only: retry exactly the task IDs whose prior JSONL record "
+            "has correct=false. Accepts a run directory, results directory, "
+            "JSONL path, or run ID under runs/."
+        ),
+    )
     parser.add_argument("--result_suffix", type=str, default=None)
     parser.add_argument(
         "--run_id",
@@ -204,9 +214,16 @@ def main():
     if args.run_id is not None:
         experiment = replace(experiment, run_id=args.run_id)
     task = args.task or experiment.dataset.name
+    if args.retry_failed_from is not None and task != "MuSiQue":
+        parser.error("--retry_failed_from is currently supported only for MuSiQue")
     dataset_mode = args.mode or experiment.dataset.mode
     data_limit = args.data_limit if args.data_limit is not None else experiment.dataset.data_limit
     data_start = args.data_start if args.data_start is not None else experiment.dataset.data_start
+    if args.retry_failed_from is not None:
+        # A retry run defaults to the complete failed subset. Explicit CLI
+        # limits still allow a cheap smoke test over that subset.
+        data_limit = args.data_limit
+        data_start = args.data_start or 0
     dataset_level = args.level if args.level is not None else experiment.dataset.level
     dataset_hop_count = (
         args.hop_count
@@ -380,6 +397,7 @@ def main():
         run_kwargs["level"] = dataset_level
     elif task == "MuSiQue":
         run_kwargs["hop_count"] = dataset_hop_count
+        run_kwargs["retry_failed_from"] = args.retry_failed_from
     task_module.run(
         runner,
         evaluator,

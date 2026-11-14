@@ -10,8 +10,8 @@ import tempfile
 import time
 
 
-DEFAULT_REPO = "TrangBui/RoutingBench-V4"
-DEFAULT_REVISION = "cdc67bad1458f6b939f759e3f764f2e93612f424"
+DEFAULT_REPO = "TrangBui/RoleRouteBench"
+DEFAULT_REVISION = "b70803c339a19c767fe9f0718c5218f51d4ed130"
 DOMAIN_ORDER = (
     "database_migration_integrity",
     "code_debugging",

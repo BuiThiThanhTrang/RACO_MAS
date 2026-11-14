@@ -9,6 +9,7 @@ from inference.policy.stage_routing import RoutingSnapshot
 _BENCHMARK_NAMES = ("musique", "gaia", "mmlu", "srdd")
 
 _NEED_TERMS: dict[str, tuple[str, ...]] = {
+    "solve_question": ("reasoning", "solve", "candidate", "answer"),
     "revise_plan": ("planning", "decompos", "subquestion", "dependency"),
     "retrieve_evidence": (
         "retriev",
@@ -84,13 +85,21 @@ class CapabilityRoutingHarness:
             self.config.get("dataset_scope_gate", True)
         )
         shortlist = dict(self.config.get("capability_shortlist") or {})
+        scoring = dict(self.config.get("capability_scoring") or {})
+        self.capability_scoring_enabled = bool(scoring.get("enabled", True))
         self.shortlist_enabled = bool(shortlist.get("enabled", True))
+        if not self.capability_scoring_enabled:
+            self.shortlist_enabled = False
         self.max_candidates = int(shortlist.get("max_candidates", 6))
         self.min_candidates = int(shortlist.get("min_candidates", 2))
         branching = dict(self.config.get("adaptive_branching") or {})
         self.branching_enabled = bool(branching.get("enabled", False))
         self.initial_paths = int(branching.get("initial_paths", 1))
         self.max_branch_options = int(branching.get("max_branch_options", 6))
+        self.branch_on_independent_diagnosis = bool(
+            branching.get("allow_independent_diagnosis", True)
+        )
+        self.branch_on_stall = bool(branching.get("allow_stall_branching", True))
         terminal = dict(self.config.get("terminal_gate") or {})
         self.terminal_gate_enabled = bool(terminal.get("enabled", True))
         self.require_musique_evidence = bool(
@@ -98,6 +107,12 @@ class CapabilityRoutingHarness:
         )
         self.max_previous_outputs = int(
             self.config.get("max_previous_outputs", 6)
+        )
+        guidance = self.config.get("prompt_guidance") or ()
+        if isinstance(guidance, str):
+            guidance = (guidance,)
+        self.prompt_guidance = tuple(
+            str(item).strip() for item in guidance if str(item).strip()
         )
         if self.max_candidates < 1 or self.min_candidates < 1:
             raise ValueError("routing_harness candidate limits must be positive")
@@ -116,7 +131,41 @@ class CapabilityRoutingHarness:
         semantic_diagnostics: Mapping[str, Any] | None = None,
     ) -> str:
         diagnostics = semantic_diagnostics or {}
+        if (
+            routing_state.get("recovery_depth_active")
+            and int(routing_state.get("recovery_steps_remaining") or 0) <= 1
+            and routing_state.get("candidate_answer_exists")
+        ):
+            return "integrate_answer"
         diagnosed = _answer_value(diagnostics.get("dominant_next_need"), "choice")
+        current_status = str(
+            routing_state.get("current_output_status") or ""
+        ).strip().upper()
+        if routing_state.get("output_status_explicit"):
+            if current_status == "NEEDS_EVIDENCE":
+                return (
+                    str(diagnosed)
+                    if diagnosed
+                    in {
+                        "revise_plan",
+                        "retrieve_evidence",
+                        "resolve_bridge",
+                        "compose_evidence",
+                    }
+                    else "retrieve_evidence"
+                )
+            if current_status == "CONFLICT":
+                return (
+                    str(diagnosed)
+                    if diagnosed in {"retrieve_evidence", "verify_candidate"}
+                    else "verify_candidate"
+                )
+            if current_status in {"MALFORMED", "NO_ANSWER"}:
+                return (
+                    str(diagnosed)
+                    if diagnosed in {"revise_plan", "retrieve_evidence", "recover_failure"}
+                    else "recover_failure"
+                )
         if diagnosed in _NEED_TERMS:
             return str(diagnosed)
         if routing_state.get("last_action_status") == "failure" or routing_state.get(
@@ -136,6 +185,8 @@ class CapabilityRoutingHarness:
         ):
             return "resolve_bridge"
         if routing_state.get("stage") == "root":
+            if _normalized(routing_state.get("profile")).startswith("mmlu"):
+                return "solve_question"
             return "revise_plan"
         return "retrieve_evidence"
 
@@ -198,8 +249,15 @@ class CapabilityRoutingHarness:
             )
         healthy = routing_state.get("last_action_status") != "failure"
         if profile.startswith("musique"):
+            if routing_state.get("unresolved_dependency"):
+                return False
             evidence_ready = (
-                int(routing_state.get("paragraph_reference_count", 0)) > 0
+                bool(
+                    routing_state.get(
+                        "evidence_lineage_exists",
+                        int(routing_state.get("paragraph_reference_count", 0)) > 0,
+                    )
+                )
                 if self.require_musique_evidence
                 else True
             )
@@ -210,6 +268,8 @@ class CapabilityRoutingHarness:
             )
         if profile.startswith("gaia"):
             return bool(routing_state.get("candidate_answer_exists") and healthy)
+        if profile.startswith("mmlu"):
+            return bool(routing_state.get("explicit_choice_exists") and healthy)
         return healthy
 
     def should_branch(
@@ -223,16 +283,49 @@ class CapabilityRoutingHarness:
         diagnostics = semantic_diagnostics or {}
         conflict = _is_yes(
             _answer_value(diagnostics.get("candidate_conflict_present"), "noul")
+        ) or bool(routing_state.get("has_conflicting_evidence"))
+        independent_branch = _is_yes(
+            _answer_value(
+                diagnostics.get("independent_branch_warranted"), "noul"
+            )
         )
         progress = _answer_value(
             diagnostics.get("progress_since_previous_step"), "score"
         )
         low_progress = isinstance(progress, (int, float)) and float(progress) <= 1.0
+        current_status = str(
+            routing_state.get("current_output_status") or ""
+        ).strip().upper()
+        if (
+            routing_state.get("output_status_explicit")
+            and current_status == "NEEDS_EVIDENCE"
+            and not conflict
+            and not routing_state.get("repeat_without_progress")
+        ):
+            return False
+        profile = _normalized(routing_state.get("profile"))
+        if profile.startswith("musique"):
+            return bool(
+                conflict
+                or (
+                    self.branch_on_independent_diagnosis
+                    and independent_branch
+                )
+                or (
+                    self.branch_on_stall
+                    and (
+                        routing_state.get("repeat_without_progress")
+                        or (
+                            routing_state.get("path_stalled") and low_progress
+                        )
+                    )
+                )
+            )
         return bool(
             conflict
-            or routing_state.get("path_stalled")
+            or independent_branch
             or routing_state.get("repeat_without_progress")
-            or low_progress
+            or (routing_state.get("path_stalled") and low_progress)
         )
 
     def route_capacity(
@@ -303,10 +396,14 @@ class CapabilityRoutingHarness:
                 need = "verify_candidate"
             else:
                 need = "retrieve_evidence"
-        scores = {
-            int(view["candidate_id"]): self._capability_score(view, need)
-            for view in kept
-        }
+        scores = (
+            {
+                int(view["candidate_id"]): self._capability_score(view, need)
+                for view in kept
+            }
+            if self.capability_scoring_enabled
+            else {}
+        )
         if self.shortlist_enabled and len(kept) > self.max_candidates:
             ranked = sorted(
                 kept,
@@ -361,14 +458,17 @@ class CapabilityRoutingHarness:
             semantic_diagnostics=semantic_diagnostics,
         )
         state["terminal_ready"] = terminal_ready
-        state["routing_harness"] = {
+        harness_state = {
             "enabled": True,
             "dominant_need": need,
-            "capability_scores": scores,
+            "capability_scoring_enabled": self.capability_scoring_enabled,
             "branch_allowed": branch_allowed,
             "route_capacity": route_capacity,
             "task_scope": task_scope,
         }
+        if self.capability_scoring_enabled:
+            harness_state["capability_scores"] = scores
+        state["routing_harness"] = harness_state
         kept_ids = tuple(int(view["candidate_id"]) for view in kept)
         state["eligible_candidate_ids"] = list(kept_ids)
         state["masked_candidates"] = masks
@@ -408,6 +508,10 @@ class CapabilityRoutingHarness:
                 "resource_ids": list(
                     routing_state.get("referenced_paragraph_ids") or ()
                 ),
+                "lineage_exists": bool(
+                    routing_state.get("evidence_lineage_exists", False)
+                ),
+                "lineage": list(routing_state.get("evidence_lineage") or ()),
             },
             "answers": {
                 "intermediate_count": int(
@@ -421,6 +525,9 @@ class CapabilityRoutingHarness:
                 "final_exists": bool(
                     routing_state.get("final_answer_exists", False)
                 ),
+                "final_lineage": list(
+                    routing_state.get("final_answer_lineage") or ()
+                ),
             },
             "execution": {
                 "last_role": routing_state.get("last_role"),
@@ -429,6 +536,17 @@ class CapabilityRoutingHarness:
                 "path_stalled": bool(routing_state.get("path_stalled", False)),
                 "role_history": list(routing_state.get("role_history") or ()),
                 "recent_outputs": outputs,
+                "output_status": routing_state.get("current_output_status"),
+                "output_status_explicit": bool(
+                    routing_state.get("output_status_explicit", False)
+                ),
+                "unresolved_dependency": bool(
+                    routing_state.get("unresolved_dependency", False)
+                ),
+                "missing_subquestion": routing_state.get("missing_subquestion"),
+                "conflict_description": routing_state.get(
+                    "conflict_description"
+                ),
             },
             "budget": {
                 "remaining_depth": remaining_depth,

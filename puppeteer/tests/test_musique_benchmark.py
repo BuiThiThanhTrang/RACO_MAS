@@ -17,11 +17,13 @@ from inference.policy.decision_planner import DecisionPlannerPolicy
 from inference.policy.frozen_llm_planner import FrozenLLMPlannerPolicy
 from inference.policy.stage_routing import StageRoutingGuard
 from inference.reasoning.reasoning import GraphReasoning
+from inference.reasoning.path import GraphReasoningPath
 from role_aware.aggregation import aggregate_musique_candidates
 from role_aware.collaboration_metrics import evaluate_musique_collaboration
 from role_aware.musique_answers import (
     canonicalize_musique_candidate,
     parse_musique_output,
+    parse_musique_result,
 )
 from role_aware.routing_profile_store import StaticRoutingProfileStore
 from tasks import musique
@@ -253,6 +255,50 @@ class MusiqueBenchmarkTests(unittest.TestCase):
         self.assertEqual(metrics["paper_compatible_support_f1"], 0.0)
         self.assertEqual(metrics["paper_compatible_supporting_paragraphs"], [])
 
+    def test_routing_diagnostics_track_status_recovery_and_lineage(self):
+        paths = [
+            {
+                "path_uid": "path-recovered",
+                "raw_prediction": "Ningbo",
+                "steps": [
+                    {
+                        "agent": "Answer Integrator",
+                        "success": "Success",
+                        "result": {
+                            "step_data": (
+                                '{"status":"NEEDS_EVIDENCE",'
+                                '"supporting_paragraph_ids":[3],'
+                                '"missing_subquestion":"Which city?",'
+                                '"final_answer":null}'
+                            )
+                        },
+                    },
+                    {
+                        "agent": "Evidence Retriever",
+                        "success": "Success",
+                        "result": {
+                            "step_data": (
+                                '{"status":"FINAL",'
+                                '"supporting_paragraph_ids":[3,8],'
+                                '"final_answer":"Ningbo"}'
+                            )
+                        },
+                    },
+                ],
+            }
+        ]
+        metrics = evaluate_musique_collaboration(
+            paths, (), (3, 8), "Ningbo", selected_candidate_index=0
+        )
+        diagnostics = metrics["routing_diagnostics"]
+        self.assertEqual(diagnostics["needs_evidence_recovery_rate"], 1.0)
+        self.assertEqual(diagnostics["explicit_nonfinal_stop_count"], 0)
+        self.assertEqual(diagnostics["false_terminal_null_count"], 0)
+        self.assertEqual(diagnostics["evidence_lineage_coverage"], 1.0)
+        self.assertEqual(
+            diagnostics["final_answer_by_role"], {"Evidence Retriever": 1}
+        )
+
     def test_pool_and_paired_configs_change_only_actor_backbone(self):
         small = load_teammate_specs(SMALL_POOL)
         large = load_teammate_specs(
@@ -305,9 +351,55 @@ class MusiqueBenchmarkTests(unittest.TestCase):
             ["hop_count", "category"],
         )
         self.assertEqual(
-            jev.global_config["graph"], {"max_width": 2, "max_depth": 5}
+            jev.global_config["graph"],
+            {
+                "max_width": 3,
+                "max_depth": 5,
+                "musique_recovery_depth_credit": 2,
+            },
         )
         self.assertEqual(jev.global_config["graph"], sol.global_config["graph"])
+
+    def test_retry_loader_selects_only_false_records_and_preserves_order(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            result_path = root / "MuSiQue_validation_all_hops.jsonl"
+            result_path.write_text(
+                "\n".join(
+                    [
+                        '{"id":"task-true","correct":true,"offset":0}',
+                        '{"id":"task-false-2","correct":false,"offset":2}',
+                        '{"id":"task-false-1","correct":false,"offset":1}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            records = musique.load_failed_retry_records(result_path)
+
+        self.assertEqual(
+            [record["id"] for record in records],
+            ["task-false-2", "task-false-1"],
+        )
+        self.assertEqual([record["offset"] for record in records], [2, 1])
+
+    def test_dataset_task_id_filter_preserves_retry_order_before_limit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            rows = [
+                {**fixture_row(), "id": "task-a"},
+                {**fixture_row(), "id": "task-b"},
+                {**fixture_row(), "id": "task-c"},
+            ]
+            pd.DataFrame(rows).to_parquet(root / "validation.parquet", index=False)
+            loaded = musique.load_dataset(
+                "validation",
+                data_root=root,
+                task_ids=["task-c", "task-a"],
+                data_limit=1,
+            )
+
+        self.assertEqual(loaded["id"].tolist(), ["task-c"])
 
     def test_dynamic_sol_input_uses_same_filtered_task_and_feasible_pool(self):
         specs = load_teammate_specs(SMALL_POOL)
@@ -409,6 +501,171 @@ class MusiqueBenchmarkTests(unittest.TestCase):
             ),
             "",
         )
+
+    def test_structured_nonfinal_status_overrides_adapter_null_artifacts(self):
+        for value in ("null", "null,", "null.", "none;"):
+            self.assertEqual(canonicalize_musique_candidate(value), "")
+
+        parsed = parse_musique_result(
+            {
+                "step_data": (
+                    '{"status":"NEEDS_EVIDENCE",'
+                    '"supporting_paragraph_ids":["P2"],'
+                    '"final_answer":null,'
+                    '"missing_subquestion":"Who was X married to?"}'
+                ),
+                "answer": "null,",
+                "final_answer": "null,",
+                "candidate_answer": "null,",
+            }
+        )
+        self.assertEqual(parsed.status, "NEEDS_EVIDENCE")
+        self.assertTrue(parsed.status_explicit)
+        self.assertTrue(parsed.explicit_nonfinal)
+        self.assertFalse(parsed.has_candidate)
+        self.assertEqual(parsed.missing_subquestion, "Who was X married to?")
+        self.assertEqual(parsed.supporting_paragraph_ids, (2,))
+
+    def test_final_contract_is_role_agnostic(self):
+        parsed = parse_musique_output(
+            '{"status":"FINAL","final_answer":"Ningbo",'
+            '"supporting_paragraph_ids":["P3","P8"]}'
+        )
+        self.assertTrue(parsed.has_final)
+        self.assertEqual(parsed.final_answer, "Ningbo")
+        self.assertEqual(parsed.supporting_paragraph_ids, (3, 8))
+
+    def test_path_aggregation_does_not_revive_final_before_nonfinal_status(self):
+        guard = StageRoutingGuard(
+            {"enabled": True, "profile": "musique_dynamic_v2"}
+        )
+        reasoning = GraphReasoning.__new__(GraphReasoning)
+        reasoning.task = {
+            "type": "MuSiQue",
+            "Question": "Which city is the answer?",
+        }
+        reasoning.policy = type("Policy", (), {"routing_guard": guard})()
+        path = GlobalInfo(0, ".", reasoning.task)
+        path.workflow.add_action(
+            Action(
+                {"action": "reasoning", "parameter": ""},
+                {
+                    "step_data": (
+                        '{"status":"FINAL","final_answer":"Ningbo",'
+                        '"supporting_paragraph_ids":[3,8]}'
+                    )
+                },
+                "Success",
+                "Evidence Retriever",
+                "qwen-3.5-9b",
+            )
+        )
+        self.assertEqual(reasoning.aggregate_answers(path, []), "Ningbo")
+
+        path.workflow.add_action(
+            Action(
+                {"action": "conclude", "parameter": ""},
+                {
+                    "step_data": (
+                        '{"status":"NEEDS_EVIDENCE","final_answer":null,'
+                        '"missing_subquestion":"Which province contains it?"}'
+                    )
+                },
+                "Success",
+                "Answer Integrator",
+                "qwen-3.5-9b",
+            )
+        )
+        self.assertIsNone(reasoning.aggregate_answers(path, ["Ningbo"]))
+
+    def test_path_end_candidate_gate_can_commit_existing_span(self):
+        guard = StageRoutingGuard(
+            {
+                "enabled": True,
+                "profile": "musique_dynamic_v2",
+                "answer_extraction": {
+                    "enabled": True,
+                    "model": "fake",
+                    "path_end_finalization": True,
+                    "roles": ["Evidence Verifier"],
+                },
+            }
+        )
+        reasoning = GraphReasoning.__new__(GraphReasoning)
+        reasoning.task = {
+            "type": "MuSiQue",
+            "Question": "Who is the spouse of the Green performer?",
+        }
+        reasoning.policy = type("Policy", (), {"routing_guard": guard})()
+        path = GlobalInfo(0, ".", reasoning.task)
+        path.workflow.add_action(
+            Action(
+                {"action": "critique", "parameter": ""},
+                {
+                    "step_data": (
+                        '{"status":"CANDIDATE",'
+                        '"candidate_answer":"Miquette Giraudy"}'
+                    )
+                },
+                "Success",
+                "Evidence Verifier",
+                "qwen-3.5-9b",
+            )
+        )
+        fake_result = (
+            {
+                "status": "FINAL",
+                "answer": "Miquette Giraudy",
+                "answer_quote": "Miquette Giraudy",
+                "tokens": 11,
+            },
+            11,
+        )
+        with patch(
+            "inference.policy.stage_routing.finalize_path_end_candidate_with_llm",
+            return_value=fake_result,
+        ) as finalizer:
+            self.assertEqual(
+                reasoning.aggregate_answers(path, []), "Miquette Giraudy"
+            )
+            self.assertEqual(
+                reasoning.aggregate_answers(path, []), "Miquette Giraudy"
+            )
+        finalizer.assert_called_once()
+
+    def test_committed_path_answer_is_not_reparsed_by_task_aggregation(self):
+        committed = (
+            "A long but already committed answer whose wording must remain intact "
+            "after path selection even without a FINAL ANSWER marker"
+        )
+        aggregation = aggregate_musique_candidates(
+            [committed],
+            mode="legacy",
+            candidates_are_committed=True,
+        )
+        self.assertEqual(aggregation["prediction"], committed)
+
+    def test_recovery_depth_credit_activates_only_for_late_needs_evidence(self):
+        path = GraphReasoningPath.__new__(GraphReasoningPath)
+        path.recovery_depth_active = False
+        path.recovery_depth_credit = 2
+        path.max_step_num = 5
+        path.effective_max_step_num = 5
+        path.completed_steps = 5
+        path.global_info = type(
+            "Info", (), {"task": {"type": "MuSiQue"}}
+        )()
+        events = []
+        path.emit = lambda event, **fields: events.append((event, fields))
+
+        path._maybe_activate_recovery_depth(
+            {"step_data": '{"status":"NEEDS_EVIDENCE"}'}
+        )
+
+        self.assertTrue(path.recovery_depth_active)
+        self.assertEqual(path.effective_max_step_num, 7)
+        self.assertEqual(path.remaining_depth, 2)
+        self.assertEqual(events[0][0], "recovery_depth_activated")
 
     def test_verifier_without_final_answer_forces_answer_integrator(self):
         specs = load_teammate_specs(SMALL_POOL)
@@ -779,6 +1036,63 @@ class MusiqueBenchmarkTests(unittest.TestCase):
         stalled_roles = {by_id[index] for index in stalled.eligible_candidate_ids}
         self.assertNotIn("Evidence Retriever", stalled_roles)
         self.assertIn("Bridge Entity Reasoner", stalled_roles)
+
+    def test_dynamic_guard_treats_needs_evidence_as_recoverable_state(self):
+        specs = load_teammate_specs(SMALL_POOL)
+        registry = AgentRegister()
+        registry.load(specs)
+        profiles = StaticRoutingProfileStore()
+        profiles.initialize(specs)
+        graph = AgentGraph(registry, profiles, allowed_tools=())
+        guard = StageRoutingGuard(
+            {
+                "enabled": True,
+                "profile": "musique_dynamic_v2",
+                "max_role_calls_per_path": 3,
+                "prevent_role_repeat_same_state": True,
+            }
+        )
+        by_id = {
+            int(view["candidate_id"]): view["role_name"]
+            for view in graph.public_agent_views()
+        }
+        task = {
+            "type": "MuSiQue",
+            "Question": "Who leads the organization identified in P2?",
+            "paragraph_ids": [2, 8],
+        }
+        path = GlobalInfo(0, ".", task)
+        path.workflow.add_action(
+            Action(
+                {"action": "reasoning", "parameter": ""},
+                {
+                    "step_data": (
+                        '{"status":"NEEDS_EVIDENCE",'
+                        '"supporting_paragraph_ids":["P2"],'
+                        '"final_answer":null,'
+                        '"missing_subquestion":"Who leads that organization?"}'
+                    ),
+                    "answer": "null,",
+                    "final_answer": "null,",
+                },
+                "Success",
+                "Answer Integrator",
+                "qwen-3.5-9b",
+            )
+        )
+
+        snapshot = guard.evaluate(path, graph.public_agent_views())
+        roles = {by_id[index] for index in snapshot.eligible_candidate_ids}
+        self.assertFalse(snapshot.state["final_answer_exists"])
+        self.assertTrue(snapshot.state["unresolved_dependency"])
+        self.assertEqual(snapshot.state["current_output_status"], "NEEDS_EVIDENCE")
+        self.assertEqual(
+            snapshot.state["missing_subquestion"],
+            "Who leads that organization?",
+        )
+        self.assertTrue(snapshot.state["evidence_lineage_exists"])
+        self.assertIn("Evidence Retriever", roles)
+        self.assertIn("Bridge Entity Reasoner", roles)
 
     def test_dynamic_jev_uses_semantic_diagnosis_before_role_choice(self):
         specs = load_teammate_specs(SMALL_POOL)

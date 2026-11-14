@@ -1,0 +1,22 @@
+seed: 42
+output_dir: runs
+benchmark:
+  data_dir: data/RoutingBench/v4_beta
+  split: development
+  track: all
+  memory_view: structured
+router:
+  type: decision
+  provider: openrouter
+  model: typesafe/jev-1.13
+  api_key_env: OPENROUTER_API_KEY
+  orchestration_profile: structured
+  observable_rejection_guard_enabled: false
+  timeout_seconds: 30
+  max_retries: 5
+  retry_backoff_seconds: 2
+  max_retry_delay_seconds: 30
+execution:
+  mode: deterministic
+  actor_model: gemini-2.5-flash
+  max_output_attempts: 2

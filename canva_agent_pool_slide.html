@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Agent pool</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #d8e0e5; font-family: Arial, Helvetica, sans-serif; }
+    [data-document-role="page"] {
+      width: 1920px;
+      height: 1080px;
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(120deg, #eef1f2 0%, #b9c7ce 100%);
+      color: #27343a;
+    }
+    .frame {
+      position: absolute;
+      left: 62px;
+      top: 70px;
+      width: 1796px;
+      height: 940px;
+      padding: 0 88px 62px;
+      background: #ffffff;
+      border: 14px solid #eef0ef;
+      box-shadow: 0 6px 24px rgba(39, 52, 58, 0.16) inset, 0 10px 28px rgba(39, 52, 58, 0.15);
+    }
+    .title-band {
+      width: 653px;
+      height: 142px;
+      margin: -28px auto 0;
+      border-radius: 0 0 44px 44px;
+      background: #dcecef;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    h1 {
+      margin: 18px 0 0;
+      font-size: 58px;
+      line-height: 1;
+      font-weight: 500;
+      letter-spacing: -1px;
+      text-transform: lowercase;
+    }
+    .kicker {
+      margin: 34px 0 8px;
+      text-align: center;
+      color: #2b96c5;
+      font-size: 25px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .subtitle {
+      margin: 0 0 32px;
+      text-align: center;
+      color: #58686f;
+      font-size: 25px;
+    }
+    .specialists {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 62px;
+      row-gap: 0;
+      width: 100%;
+    }
+    .role {
+      min-height: 98px;
+      padding: 19px 12px 14px 72px;
+      position: relative;
+      border-top: 2px solid #d7e0e4;
+    }
+    .role:nth-child(1), .role:nth-child(2) { border-top: 0; }
+    .num {
+      position: absolute;
+      left: 0;
+      top: 20px;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f5d84d;
+      color: #27343a;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    .role-title {
+      font-size: 25px;
+      line-height: 1.15;
+      font-weight: 700;
+      color: #27343a;
+    }
+    .meta {
+      margin-top: 7px;
+      color: #687980;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+    .bottom {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      margin-top: 24px;
+      padding-top: 28px;
+      border-top: 3px solid #a9cfdc;
+    }
+    .bottom-item {
+      position: relative;
+      min-height: 112px;
+      padding: 16px 24px 14px 102px;
+      background: #eff5f6;
+      border-radius: 26px;
+    }
+    .bottom-item.verifier { background: #fff5bd; }
+    .badge {
+      position: absolute;
+      left: 24px;
+      top: 25px;
+      width: 58px;
+      height: 58px;
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #45a9d3;
+      color: #ffffff;
+      font-size: 26px;
+      font-weight: 700;
+    }
+    .verifier .badge { background: #e2bd16; color: #27343a; }
+    .label {
+      color: #2b96c5;
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+    }
+    .verifier .label { color: #9d7d00; }
+    .bottom-title {
+      margin-top: 4px;
+      color: #27343a;
+      font-size: 26px;
+      font-weight: 700;
+      line-height: 1.15;
+    }
+    .bottom-meta {
+      margin-top: 7px;
+      color: #687980;
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <section data-document-role="page" data-label="Agent pool">
+    <div class="frame">
+      <div class="title-band"><h1>agent pool</h1></div>
+      <div class="kicker">MMLU-Pro heterogeneous pool</div>
+      <div class="subtitle">5 domain specialists · 1 cross-domain solver · 1 adversarial verifier</div>
+
+      <div class="specialists">
+        <div class="role">
+          <div class="num">1</div>
+          <div class="role-title">Quantitative &amp; Formal Reasoner</div>
+          <div class="meta">qwen-3.5-9b · Hugging Face Router</div>
+        </div>
+        <div class="role">
+          <div class="num">2</div>
+          <div class="role-title">Natural &amp; Life Science Specialist</div>
+          <div class="meta">qwen-3.5-9b · Hugging Face Router</div>
+        </div>
+        <div class="role">
+          <div class="num">3</div>
+          <div class="role-title">Computing &amp; Engineering Specialist</div>
+          <div class="meta">llama-3.1-8b · Hugging Face Router</div>
+        </div>
+        <div class="role">
+          <div class="num">4</div>
+          <div class="role-title">Social, Legal &amp; Business Specialist</div>
+          <div class="meta">gemma-3-12b-it · Hugging Face Router</div>
+        </div>
+        <div class="role">
+          <div class="num">5</div>
+          <div class="role-title">Humanities &amp; Behavioral Specialist</div>
+          <div class="meta">mistral-nemo-12b · OpenRouter</div>
+        </div>
+      </div>
+
+      <div class="bottom">
+        <div class="bottom-item">
+          <div class="badge">G</div>
+          <div class="label">Cross-domain fallback</div>
+          <div class="bottom-title">Generalist Independent Solver</div>
+          <div class="bottom-meta">qwen-3.5-9b · Hugging Face Router</div>
+        </div>
+        <div class="bottom-item verifier">
+          <div class="badge">V</div>
+          <div class="label">Quality gate</div>
+          <div class="bottom-title">Adversarial Verifier</div>
+          <div class="bottom-meta">qwen-3.5-9b · Hugging Face Router</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</body>
+</html>

@@ -42,6 +42,8 @@ class SharedRoleActor:
             return {'status':'invalid_output','raw_output':'No executable tool for role','tool_events':[], 'responses':[]}
         allowed = {t.name:t for t in tools}
         plain_tool=next((name for name in ('write_source','write_diagnosis') if name in allowed),None) if getattr(adapter,'adapter_id','')=='formal_proof.lean4.v1' else None
+        python_submission = getattr(adapter, 'plain_python_submission', None)
+        python_work = python_submission(env, allowed) if python_submission else None
         context = adapter.executor_context(env,action,role_profile) if hasattr(adapter,'executor_context') else {'state':adapter.public_observation(env)}
         payload = {'task':task,'role':role_profile,'public_context':context,
             'allowed_tools':[t.to_dict() for t in tools],
@@ -56,6 +58,13 @@ class SharedRoleActor:
             'Return one JSON object: {"tool": "an allowed tool", "arguments": {its typed arguments}}. Use only evidence in public context. Bounded reads may precede the role work product; successful work product completes your turn. Do not choose another role.')
         if plain_tool:
             instruction=('Return a Lean proof term or the original theorem declaration with its completed proof. Preserve the original statement and context.' if plain_tool=='write_source' else 'Return your diagnosis grounded in the public evidence.')+' If you need an artifact fragment first, return JSON {"tool":"read_artifact","arguments":{"artifact":"key","offset":0,"max_chars":8000}}; otherwise return the work product directly. Do not choose another role.'
+        if python_work:
+            instruction = (
+                python_work[2]
+                + ' Return Python directly or inside a Python code fence. '
+                'If you need more evidence, call read_artifact with the JSON tool schema below. '
+                'Do not choose another role.'
+            )
         rendered=json.dumps(payload,ensure_ascii=False)
         if getattr(adapter,'adapter_id','')=='formal_proof.lean4.v1':
             # Code layout is evidence. Render it verbatim instead of requiring
@@ -69,6 +78,16 @@ class SharedRoleActor:
         events, responses, requests = [], [], []
         limit = 1 if direct or deterministic else self.max_tool_calls
         final = ''
+
+        def invalid_output(raw, code, message, *, tool=None, field=None):
+            result = {'status':'invalid_output','raw_output':raw,'tool_events':events,'responses':responses,'requests':requests}
+            if hasattr(adapter, 'record_contract_error'):
+                result['contract_error'] = {
+                    'role': action, 'code': code, 'message': message, 'field': field,
+                    'tool': tool or (tools[0].name if len(tools) == 1 else None),
+                }
+            return result
+
         for _ in range(limit):
             if deterministic:
                 name, arguments = tools[0].name, {}
@@ -79,7 +98,7 @@ class SharedRoleActor:
                 final = raw
                 responses.append({'raw_output':raw,'metadata':metadata})
                 if not raw.strip():
-                    return {'status':'invalid_output','raw_output':raw,'tool_events':events,'responses':responses,'requests':requests}
+                    return invalid_output(raw, 'empty_output', 'The executor returned an empty response.')
                 if direct:
                     name, arguments = tools[0].name, {'content':raw}
                 else:
@@ -89,24 +108,40 @@ class SharedRoleActor:
                         name, arguments = parsed['tool'],parsed.get('arguments',{})
                         if name not in allowed or not isinstance(arguments,dict):
                             raise ValueError('Unauthorized tool')
-                    except (ValueError,KeyError,TypeError):
+                    except (ValueError,KeyError,TypeError) as error:
                         if plain_tool:
                             name,arguments=plain_tool,{'content':raw}
+                        elif python_work:
+                            name, defaults, _, source_field = python_work
+                            arguments = {**defaults, source_field: raw}
                         else:
-                            return {'status':'invalid_output','raw_output':raw,'tool_events':events,'responses':responses,'requests':requests}
+                            if isinstance(error, json.JSONDecodeError):
+                                return invalid_output(raw, 'invalid_json', 'The response could not be parsed as JSON.')
+                            return invalid_output(raw, 'invalid_tool_call', 'Use an allowed tool with an arguments object.')
             # Typed argument validation is independent of model identity.
             import jsonschema
             try:
                 jsonschema.validate(arguments,dict(allowed[name].input_schema))
-            except jsonschema.ValidationError:
-                return {'status':'invalid_output','raw_output':final,'tool_events':events,'responses':responses,'requests':requests}
+            except jsonschema.ValidationError as error:
+                field = '.'.join(['arguments', *map(str, error.absolute_path)])
+                message = f'Value violates the {error.validator} constraint.'
+                if error.validator in ('minLength', 'maxLength', 'minItems', 'maxItems', 'required', 'type'):
+                    message = f'Expected {error.validator}: {error.validator_value}.'
+                return invalid_output(final, 'argument_schema', message, tool=name, field=field)
             result = adapter.execute_tool(env,name,arguments)
             events.append({'tool_call':{'name':name,'arguments':arguments},'tool_result':result.to_dict()})
             final = result.observable_message
             # Preserve the proven code actor semantics: reads may precede one
             # authoritative role operation, whose success completes this turn.
             completed_work = result.status=='success' and name not in ('inspect_inputs','inspect_repository_file','search_repository','read_artifact')
-            if direct or deterministic or completed_work or result.status not in ('success','no_progress') or len(tools)==1:
+            retry_python = (
+                python_work and name == python_work[0]
+                and result.status == 'invalid_output'
+                and result.output.get('error_type') == 'CandidatePolicyError'
+            )
+            if direct or deterministic or completed_work or (
+                result.status not in ('success', 'no_progress') and not retry_python
+            ) or len(tools) == 1:
                 break
             messages += [{'role':'assistant','content':raw},{'role':'user','content':json.dumps(result.to_dict(),ensure_ascii=False)}]
         status=events[-1]['tool_result']['status'] if events else 'invalid_output'

@@ -27,6 +27,7 @@ from tasks.evaluator import BenchmarkEvaluator
 from role_aware.evidence import PathTerminalEvidence
 from role_aware.route_experience import RouteExperienceEvent
 from role_aware.musique_llm_canonicalizer import original_question
+from role_aware.musique_answers import parse_musique_result
 from role_aware.multiagentbench_cs import (
     build_router_cs_semantic_trace,
     judge_router_cs_semantic,
@@ -44,6 +45,11 @@ class GraphReasoning:
 
         self.max_parallel_paths = max_parallel_paths
         self.max_step_num = max_step_num
+        graph_config = dict(self.runtime_config.get("graph") or {})
+        self.recovery_depth_credit = max(
+            0, int(graph_config.get("musique_recovery_depth_credit", 0) or 0)
+        )
+        self.max_runtime_steps = self.max_step_num + self.recovery_depth_credit
         self.registry = registry
         self.profile_evidence = profile_evidence
 
@@ -248,7 +254,17 @@ class GraphReasoning:
         if capacity < 1:
             raise RuntimeError("No capacity reserved for current path")
         info = path.global_info if path else self._new_info(-1)
-        info.remaining_depth = self.max_step_num - (path.completed_steps if path else 0)
+        info.remaining_depth = (
+            path.remaining_depth if path else self.max_step_num
+        )
+        info.recovery_depth_active = bool(
+            path and path.recovery_depth_active
+        )
+        info.recovery_steps_remaining = (
+            max(0, path.effective_max_step_num - path.completed_steps)
+            if path and path.recovery_depth_active
+            else 0
+        )
         info.path_uid = path.path_uid if path else "root"
         if hasattr(self.policy, "propose"):
             proposal = self.policy.propose(info, capacity)
@@ -287,6 +303,7 @@ class GraphReasoning:
                     target = GraphReasoningPath(agent, self.max_parallel_paths, self.global_logger,
                         self.workspace_path, self.action_graph, self.registry, index=index,
                         global_info=self._new_info(index), policy=self.policy, max_step_num=self.max_step_num,
+                        recovery_depth_credit=self.recovery_depth_credit,
                         external_tools_enabled=self.external_tools_enabled, env=self.env, env_name=self.env_name,
                         audit=self.audit, path_uid=uid)
                     target.emit("path_created", inherited_steps=0, inherited_action_ids=[])
@@ -345,6 +362,61 @@ class GraphReasoning:
         return self.answers
 
     def aggregate_answers(self, global_info, answers:list, query_func=None) -> str:
+        if self.task.get("type") == "MuSiQue":
+            routing_guard = getattr(self.policy, "routing_guard", None)
+            for action in reversed(list(global_info.workflow.workflow)):
+                if routing_guard is not None:
+                    parsed = routing_guard.parse_musique_result(
+                        action.result,
+                        question=self.task.get("Question", ""),
+                        role=action.agent_role,
+                    )
+                else:
+                    parsed = parse_musique_result(action.result)
+                # A later explicit non-final contract invalidates stale answers
+                # from earlier in the path. Evidence-only steps without an
+                # explicit status can still be skipped safely.
+                if parsed.explicit_nonfinal or (
+                    parsed.status_explicit and parsed.status == "CANDIDATE"
+                ):
+                    if parsed.status == "CANDIDATE" and routing_guard is not None:
+                        finalized = routing_guard.finalize_musique_path_candidate(
+                            action.result,
+                            question=self.task.get("Question", ""),
+                            role=action.agent_role,
+                        )
+                        if finalized.final_answer:
+                            main_logger.info(
+                                "[MuSiQue Path Selection] path-end candidate committed: %s",
+                                finalized.final_answer,
+                            )
+                            return finalized.final_answer
+                    return None
+                if parsed.final_answer:
+                    main_logger.info(
+                        "[MuSiQue Path Selection] last valid final answer: %s",
+                        parsed.final_answer,
+                    )
+                    return parsed.final_answer
+                if parsed.candidate_answer:
+                    if routing_guard is not None:
+                        finalized = routing_guard.finalize_musique_path_candidate(
+                            action.result,
+                            question=self.task.get("Question", ""),
+                            role=action.agent_role,
+                        )
+                        if finalized.final_answer:
+                            main_logger.info(
+                                "[MuSiQue Path Selection] path-end candidate committed: %s",
+                                finalized.final_answer,
+                            )
+                            return finalized.final_answer
+                    return None
+            main_logger.info(
+                "[MuSiQue Path Selection] no committed final answer on path."
+            )
+            return None
+
         if len(answers) == 0:
             main_logger.info("[Aggregation] skipped because this path has no answer candidates.")
             return None
@@ -353,7 +425,7 @@ class GraphReasoning:
         # to incorporate the evidence collected earlier on that same path. An
         # answer-only LLM vote can discard that provenance and revive an obsolete
         # guess, so path selection is deliberately deterministic.
-        if self.task.get("type") in {"GAIA", "MuSiQue"}:
+        if self.task.get("type") == "GAIA":
             selected = select_gaia_path_answer(answers)
             main_logger.info("[Open QA Path Selection] last non-empty answer: %s", selected)
             return selected
@@ -551,6 +623,7 @@ class GraphReasoning:
                 question=self.task.get("Question", ""),
                 verifier=verifier,
                 fallback_extractor=fallback_extractor,
+                candidates_are_committed=True,
             )
             self.final_answer = aggregation["prediction"]
             selected_candidate_index = aggregation.get("selected_candidate_index")
