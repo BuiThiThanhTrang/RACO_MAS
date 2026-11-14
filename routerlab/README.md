@@ -8,14 +8,16 @@ backbone by default: `Qwen/Qwen2.5-Coder-3B-Instruct`.
 
 ## System contract
 
-The dynamic workflow is:
+The dynamic workflow is router-first:
 
 ```text
 MBPP+ task
    |
-mandatory Coder bootstrap
+Router sees the fixed five-action space
    |
-controller runs Base Tests automatically
+selected executor (or STOP)
+   |
+first code -> private initial Base+Plus evaluation
    |
 public state -> Router -> {one executor, STOP}
                          |
@@ -40,12 +42,14 @@ routers.
 |---|---|---|
 | E1 | Single-agent self-repair | Generate, inspect Base feedback, repair until pass or budget |
 | E2 | Fixed multi-agent | Coder → Logic Reviewer → Edge-case Analyst → Repair Agent |
-| E3-H | Dynamic heuristic | Same expert pool; deterministic heuristic chooses executor/STOP |
-| E3-M | Dynamic model router | A decision model chooses executor/STOP from public state |
+| E3-H | Dynamic heuristic | Same fixed action space; deterministic policy chooses executor/STOP |
+| E3-M | Dynamic generative router | An SLM chooses executor/STOP from public state |
+| E3-L | Laya decision model | `convaiinnovations/laya` answers one typed choice question |
 
-E3 always begins with the same mandatory Coder bootstrap. After that, only the router
-chooses normal termination through `STOP`. The controller may force termination when
-a hard model-call, token, Base-Test, or wall-time budget is exhausted.
+E3 has no mandatory Coder bootstrap and no action mask. Every routing state exposes the
+same five actions. `repair_agent` before code is a charged no-op, and `STOP` before code
+ends with no submission. The controller may force termination only when a hard model-call,
+token, Base-Test, or wall-time budget is exhausted.
 
 ## Expert pool
 
@@ -89,7 +93,8 @@ Efficiency and routing metrics:
 - model calls, input/output tokens, Base-Test executions, wall time, and reported cost;
 - cost per solved task;
 - executor utilization;
-- router decisions, invalid-decision count/rate, and termination reasons.
+- router decisions, invalid-decision count/rate, no-op and no-submission rates,
+  steps to first code, and termination reasons.
 
 ## Output of each run
 
@@ -131,13 +136,14 @@ Create one 50-task manifest before comparing methods:
 routerlab manifest --config configs\mbpp_e1.yaml --limit 50 --output manifests\mbpp_plus_pilot50_s42.json
 ```
 
-Run all four methods against exactly that manifest:
+Run all five methods against exactly that manifest:
 
 ```powershell
 routerlab run --config configs\mbpp_e1.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
 routerlab run --config configs\mbpp_e2.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
 routerlab run --config configs\mbpp_e3_heuristic.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
 routerlab run --config configs\mbpp_e3_model.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
+routerlab run --config configs\mbpp_e3_laya.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
 ```
 
 For a quick environment check, create a 5-task manifest or override the limit:
@@ -178,3 +184,4 @@ Implementation phases and acceptance criteria are in
 
 - EvalPlus: <https://github.com/evalplus/evalplus>
 - Qwen2.5-Coder-3B-Instruct: <https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct>
+- Laya: <https://github.com/NandhaKishorM/laya>

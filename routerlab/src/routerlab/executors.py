@@ -46,13 +46,20 @@ class ExecutorPool:
             ]
         )
         output_kind = self.specs[executor_id].output_kind
+        no_code_to_repair = executor_id == "repair_agent" and code is None
         return ExecutorResult(
             executor_id=executor_id,
             raw_output=response.text,
             usage=response.usage,
             latency_ms=response.latency_ms,
-            code=extract_code(response.text) if output_kind == "code" else None,
+            code=(
+                extract_code(response.text)
+                if output_kind == "code" and not no_code_to_repair
+                else None
+            ),
             findings=parse_findings(response.text) if output_kind == "findings" else (),
+            no_op=no_code_to_repair,
+            no_op_reason="no_code_to_repair" if no_code_to_repair else "",
         )
 
 

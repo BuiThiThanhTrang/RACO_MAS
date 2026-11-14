@@ -5,6 +5,7 @@ import unittest
 from routerlab.contracts import (
     BudgetSnapshot,
     EXECUTOR_IDS,
+    ROUTER_ACTIONS,
     RoutingState,
     STOP_ACTION,
 )
@@ -24,17 +25,17 @@ class ContractTests(unittest.TestCase):
             task_id="Mbpp/1",
             task_prompt="prompt",
             entry_point="f",
-            current_code="def f(): return 1",
-            code_version=1,
+            current_code=None,
+            code_version=0,
             base_feedback=None,
             logic_review=(),
             edge_cases=(),
             action_history=(),
             budget=BudgetSnapshot(2, 100, 2, 1000),
-            legal_actions=("coder", STOP_ACTION),
         )
         payload = state.to_router_payload()
         self.assertFalse(any("plus" in key.lower() for key in payload))
+        self.assertEqual(tuple(payload["action_space"]), ROUTER_ACTIONS)
 
 
 if __name__ == "__main__":

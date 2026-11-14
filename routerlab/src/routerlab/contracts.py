@@ -13,6 +13,7 @@ EXECUTOR_IDS = (
     "edge_case_analyst",
     "repair_agent",
 )
+ROUTER_ACTIONS = EXECUTOR_IDS + (STOP_ACTION,)
 
 
 def _non_negative(value: int | float, name: str) -> None:
@@ -128,23 +129,18 @@ class RoutingState:
     task_id: str
     task_prompt: str
     entry_point: str
-    current_code: str
+    current_code: str | None
     code_version: int
     base_feedback: BaseTestFeedback | None
     logic_review: tuple[str, ...]
     edge_cases: tuple[str, ...]
     action_history: tuple[str, ...]
     budget: BudgetSnapshot
-    legal_actions: tuple[str, ...]
+    action_space: tuple[str, ...] = ROUTER_ACTIONS
 
     def __post_init__(self) -> None:
-        if len(set(self.legal_actions)) != len(self.legal_actions):
-            raise ValueError("legal_actions must be unique")
-        unknown = set(self.legal_actions) - (set(EXECUTOR_IDS) | {STOP_ACTION})
-        if unknown:
-            raise ValueError(f"Unknown legal actions: {sorted(unknown)}")
-        if not self.legal_actions:
-            raise ValueError("legal_actions must not be empty")
+        if self.action_space != ROUTER_ACTIONS:
+            raise ValueError("action_space must contain the full, fixed router action set")
 
     def to_router_payload(self) -> dict[str, Any]:
         return {
@@ -158,7 +154,7 @@ class RoutingState:
             "edge_cases": list(self.edge_cases),
             "action_history": list(self.action_history),
             "budget": asdict(self.budget),
-            "legal_actions": list(self.legal_actions),
+            "action_space": list(self.action_space),
         }
 
 
@@ -169,6 +165,7 @@ class RouterDecision:
     latency_ms: float = 0.0
     raw_output: str = ""
     valid: bool = True
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.action_id not in set(EXECUTOR_IDS) | {STOP_ACTION}:
@@ -184,6 +181,8 @@ class ExecutorResult:
     latency_ms: float
     code: str | None = None
     findings: tuple[str, ...] = ()
+    no_op: bool = False
+    no_op_reason: str = ""
 
     def __post_init__(self) -> None:
         if self.executor_id not in set(EXECUTOR_IDS) | {"single_agent"}:
@@ -210,7 +209,7 @@ class EpisodeResult:
     method: str
     initial_evaluation: EvaluationSnapshot | None
     final_evaluation: EvaluationSnapshot | None
-    final_code: CodeArtifact
+    final_code: CodeArtifact | None
     steps: tuple[StepRecord, ...]
     termination_reason: str
     total_model_calls: int
@@ -227,3 +226,7 @@ class EpisodeResult:
     @property
     def final_success(self) -> bool:
         return bool(self.final_evaluation and self.final_evaluation.plus_passed)
+
+    @property
+    def has_submission(self) -> bool:
+        return self.final_code is not None

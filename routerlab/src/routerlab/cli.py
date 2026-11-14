@@ -13,7 +13,7 @@ from .evaluator import EvalPlusEvaluator
 from .executors import ExecutorPool, SingleAgent
 from .metrics import aggregate_metrics
 from .model import build_model_client
-from .routers import HeuristicRouter, ModelRouter
+from .routers import HeuristicRouter, LayaDecisionRouter, ModelRouter
 from .runlog import RunLogger
 from .workflows import WorkflowRunner
 
@@ -49,6 +49,9 @@ def run_command(args: argparse.Namespace) -> int:
     if config.workflow.method == "e3":
         if config.workflow.router == "heuristic":
             router = HeuristicRouter()
+        elif config.workflow.router == "laya":
+            router = LayaDecisionRouter(config.router_model)  # type: ignore[arg-type]
+            router_counts_model_call = True
         else:
             router = ModelRouter(build_model_client(config.router_model))  # type: ignore[arg-type]
             router_counts_model_call = True

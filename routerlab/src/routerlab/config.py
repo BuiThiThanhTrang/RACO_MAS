@@ -66,15 +66,19 @@ def load_config(path: str | Path) -> RunConfig:
     workflow = _construct(WorkflowConfig, data.get("workflow"))
     if workflow.method not in {"e1", "e2", "e3"}:
         raise ValueError("workflow.method must be e1, e2 or e3")
-    if workflow.method == "e3" and workflow.router not in {"heuristic", "model"}:
-        raise ValueError("E3 requires workflow.router=heuristic or model")
+    if workflow.method == "e3" and workflow.router not in {
+        "heuristic",
+        "model",
+        "laya",
+    }:
+        raise ValueError("E3 requires workflow.router=heuristic, model or laya")
     router_model = (
         _construct(ModelConfig, data.get("router_model"))
         if data.get("router_model")
         else None
     )
-    if workflow.router == "model" and router_model is None:
-        raise ValueError("model router requires router_model configuration")
+    if workflow.router in {"model", "laya"} and router_model is None:
+        raise ValueError(f"{workflow.router} router requires router_model configuration")
     return RunConfig(
         run_name=str(data["run_name"]),
         output_dir=str(data.get("output_dir", "runs")),

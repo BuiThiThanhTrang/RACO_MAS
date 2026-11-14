@@ -33,11 +33,44 @@ def episode(initial: bool, final: bool) -> EpisodeResult:
     )
 
 
+def no_submission_episode() -> EpisodeResult:
+    return EpisodeResult(
+        task_id="Mbpp/2",
+        method="e3",
+        initial_evaluation=None,
+        final_evaluation=None,
+        final_code=None,
+        steps=(
+            StepRecord(
+                0,
+                "STOP",
+                0,
+                0,
+                router_decision=True,
+                metadata={"valid": True, "counts_model_call": True},
+            ),
+        ),
+        termination_reason="router_stop_no_submission",
+        total_model_calls=1,
+        total_input_tokens=10,
+        total_output_tokens=0,
+        total_base_executions=0,
+        total_cost_usd=0.0,
+        wall_time_ms=2,
+    )
+
+
 class MetricsAndLoggingTests(unittest.TestCase):
     def test_recovery_metric(self):
         metrics = aggregate_metrics([episode(False, True)])
         self.assertEqual(metrics["quality"]["repair_recovery_rate"], 1.0)
         self.assertEqual(metrics["quality"]["absolute_plus_improvement"], 1.0)
+
+    def test_no_submission_is_a_failed_routing_outcome(self):
+        metrics = aggregate_metrics([no_submission_episode()])
+        self.assertEqual(metrics["quality"]["final_plus_pass_rate"], 0.0)
+        self.assertEqual(metrics["routing"]["no_submission_rate"], 1.0)
+        self.assertEqual(metrics["routing"]["premature_stop_rate"], 1.0)
 
     def test_public_trace_does_not_contain_plus_results(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -49,6 +82,16 @@ class MetricsAndLoggingTests(unittest.TestCase):
             self.assertIn("plus_passed", private)
             json.loads(public)
             json.loads(private)
+
+    def test_no_submission_logging_has_no_fake_solution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logger = RunLogger(directory)
+            logger.log_episode(no_submission_episode())
+            solution = json.loads(
+                Path(directory, "solutions.jsonl").read_text(encoding="utf-8")
+            )
+            self.assertEqual(solution["status"], "no_submission")
+            self.assertIsNone(solution["solution"])
 
 
 if __name__ == "__main__":

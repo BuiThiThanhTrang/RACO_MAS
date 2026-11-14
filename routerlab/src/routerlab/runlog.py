@@ -28,7 +28,9 @@ class RunLogger:
             "method": result.method,
             "steps": [self._public_step(step) for step in result.steps],
             "termination_reason": result.termination_reason,
-            "final_code_sha256": result.final_code.sha256,
+            "final_code_sha256": (
+                result.final_code.sha256 if result.final_code else None
+            ),
             "usage": {
                 "model_calls": result.total_model_calls,
                 "input_tokens": result.total_input_tokens,
@@ -53,8 +55,9 @@ class RunLogger:
             self.solutions_path,
             {
                 "task_id": result.task_id,
-                "solution": result.final_code.source,
-                "code_sha256": result.final_code.sha256,
+                "solution": result.final_code.source if result.final_code else None,
+                "code_sha256": result.final_code.sha256 if result.final_code else None,
+                "status": "submitted" if result.final_code else "no_submission",
             },
         )
 

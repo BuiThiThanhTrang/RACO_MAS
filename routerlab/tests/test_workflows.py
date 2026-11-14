@@ -72,6 +72,16 @@ class StopRouter:
         return RouterDecision("STOP")
 
 
+class QueueRouter:
+    def __init__(self, actions):
+        self.actions = iter(actions)
+        self.states = []
+
+    def select(self, state):
+        self.states.append(state)
+        return RouterDecision(next(self.actions))
+
+
 class WorkflowTests(unittest.TestCase):
     task = TaskSpec("Mbpp/1", "Write f", "f")
 
@@ -161,7 +171,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result.termination_reason, "router_stop")
 
     def test_router_stop_is_respected(self):
-        client = ReplayModelClient(["def f():\n    return 0"])
+        client = ReplayModelClient([])
         evaluator = FakeEvaluator()
         runner = WorkflowRunner(
             make_config("e3", "heuristic"),
@@ -171,8 +181,58 @@ class WorkflowTests(unittest.TestCase):
             StopRouter(),
         )
         result = runner.run(self.task)
-        self.assertEqual(result.termination_reason, "router_stop")
+        self.assertEqual(result.termination_reason, "router_stop_no_submission")
+        self.assertIsNone(result.final_code)
+        self.assertEqual(evaluator.calls, [])
+
+    def test_router_can_analyze_before_first_code(self):
+        client = ReplayModelClient(
+            [
+                '{"findings": ["empty input"]}',
+                '{"findings": ["preserve invariant"]}',
+                "def f():\n    return 1",
+            ]
+        )
+        router = QueueRouter(
+            ["edge_case_analyst", "logic_reviewer", "coder", "STOP"]
+        )
+        evaluator = FakeEvaluator()
+        runner = WorkflowRunner(
+            make_config("e3", "heuristic"),
+            evaluator,
+            ExecutorPool(client),
+            SingleAgent(client),
+            router,
+        )
+        result = runner.run(self.task)
+        self.assertEqual(
+            [step.action_id for step in result.steps if not step.router_decision],
+            ["edge_case_analyst", "logic_reviewer", "coder"],
+        )
+        self.assertIsNone(router.states[0].current_code)
+        self.assertEqual(router.states[0].code_version, 0)
         self.assertEqual(evaluator.calls, [(1, True)])
+        self.assertTrue(result.final_success)
+
+    def test_repair_without_code_is_counted_as_no_op(self):
+        client = ReplayModelClient(
+            ["def f():\n    return 999", "def f():\n    return 1"]
+        )
+        router = QueueRouter(["repair_agent", "coder", "STOP"])
+        evaluator = FakeEvaluator()
+        runner = WorkflowRunner(
+            make_config("e3", "heuristic"),
+            evaluator,
+            ExecutorPool(client),
+            SingleAgent(client),
+            router,
+        )
+        result = runner.run(self.task)
+        executor_steps = [step for step in result.steps if not step.router_decision]
+        self.assertTrue(executor_steps[0].metadata["no_op"])
+        self.assertEqual(executor_steps[0].code_version_after, 0)
+        self.assertEqual(evaluator.calls, [(1, True)])
+        self.assertTrue(result.final_success)
 
 
 if __name__ == "__main__":

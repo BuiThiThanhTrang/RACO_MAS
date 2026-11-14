@@ -1,6 +1,6 @@
 run_name: mbpp_e3_model_router
 output_dir: runs
-prompt_version: v1
+prompt_version: v2-router-first
 
 dataset:
   name: mbpp
@@ -29,7 +29,7 @@ router_model:
 budget:
   max_model_calls: 9
   max_total_tokens: 14000
-  max_base_executions: 5
+  max_base_executions: 20
   max_wall_time_seconds: 600
 
 workflow:

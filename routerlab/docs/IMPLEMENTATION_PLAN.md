@@ -6,7 +6,7 @@ Build an independent experiment package for comparing fixed and dynamic multi-ag
 workflows on MBPP+. The router has one responsibility: select one executor from the
 pool or select `STOP`.
 
-Legal router actions:
+Fixed router action space at every step:
 
 - `coder`
 - `logic_reviewer`
@@ -43,12 +43,15 @@ initial and final artifacts.
 4. **Comparable workflows**
    - E1: single agent with Base-Test-driven self-repair.
    - E2: Coder, Logic Reviewer, Edge-case Analyst, Repair Agent in a fixed sequence.
-   - E3: mandatory Coder bootstrap followed by dynamic executor/`STOP` decisions.
-   - Implement heuristic and model-based routers through the same routing interface.
+   - E3: router-first execution with the full fixed action space at every step.
+   - Do not mask Repair or STOP before code: they become a charged no-op and a failed
+     no-submission respectively.
+   - Implement heuristic, generative-model, and Laya decision-model routers through
+     the same routing interface.
 
 5. **Budget and controller policy**
    - Apply the same model-call, token, Base-Test, and wall-time limits.
-   - Reserve evaluation capacity for the final artifact.
+   - Reserve evaluation capacity for the final artifact when one exists.
    - Let E3 stop through router `STOP`; allow controller-forced termination only when
      a hard budget prevents another valid decision or execution.
    - Select fallback code using Base Tests only, never Plus Tests.
@@ -56,7 +59,8 @@ initial and final artifacts.
 6. **Metrics and reproducibility**
    - Record initial/final Base and Plus pass rates, absolute and normalized Plus
      improvement, repair recovery, calls, tokens, Base executions, latency, cost,
-     executor utilization, invalid router rate, and termination reasons.
+     executor utilization, invalid router rate, no-op/no-submission rates, steps to
+     first code, and termination reasons.
    - Generate one task manifest and reuse it for every method.
    - Save config, manifest, traces, final solutions, errors, and incremental metrics.
 
@@ -71,6 +75,6 @@ initial and final artifacts.
 - `routerlab` contains no import or runtime dependency on the previous framework.
 - A router cannot request tests or access Plus-Test information.
 - Every changed code hash is Base-tested automatically.
-- E1, E2, E3-heuristic, and E3-model run from separate versioned YAML configs.
+- E1, E2, E3-heuristic, E3-generative, and E3-Laya run from separate versioned YAML configs.
 - All methods can use the same manifest and expert checkpoint.
 - Unit tests pass before any benchmark run.

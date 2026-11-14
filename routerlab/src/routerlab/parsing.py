@@ -29,14 +29,14 @@ def parse_findings(text: str) -> tuple[str, ...]:
     return tuple(line for line in lines if line)
 
 
-def parse_router_action(text: str, legal_actions: tuple[str, ...]) -> tuple[str, bool]:
+def parse_router_action(text: str, action_space: tuple[str, ...]) -> tuple[str, bool]:
     cleaned = text.strip()
     try:
         payload = json.loads(cleaned)
         action = str(payload.get("action", "")).strip()
     except json.JSONDecodeError:
         action = cleaned.splitlines()[-1].strip() if cleaned else ""
-    if action in legal_actions:
+    if action in action_space:
         return action, True
-    fallback = "STOP" if "STOP" in legal_actions else legal_actions[0]
+    fallback = "STOP" if "STOP" in action_space else action_space[0]
     return fallback, False

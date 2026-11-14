@@ -38,7 +38,37 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
     router_steps = [
         step for item in episodes for step in item.steps if step.router_decision
     ]
+    executor_steps = [
+        step for item in episodes for step in item.steps if not step.router_decision
+    ]
     invalid_router = sum(not bool(step.metadata.get("valid", True)) for step in router_steps)
+    no_op_actions = sum(bool(step.metadata.get("no_op", False)) for step in executor_steps)
+    no_submissions = sum(not item.has_submission for item in episodes)
+    premature_stops = sum(
+        item.termination_reason == "router_stop_no_submission" for item in episodes
+    )
+    routing_steps_to_first_code = []
+    calls_to_first_code = []
+    for item in episodes:
+        first_index = next(
+            (
+                index
+                for index, step in enumerate(item.steps)
+                if step.code_version_before == 0 and step.code_version_after > 0
+            ),
+            None,
+        )
+        if first_index is None:
+            continue
+        prefix = item.steps[: first_index + 1]
+        routing_steps_to_first_code.append(sum(step.router_decision for step in prefix))
+        calls_to_first_code.append(
+            sum(
+                (not step.router_decision)
+                or bool(step.metadata.get("counts_model_call", False))
+                for step in prefix
+            )
+        )
     solved = sum(final_plus)
     total_cost = sum(item.total_cost_usd for item in episodes)
     denominator = 1.0 - initial_plus_rate
@@ -84,6 +114,20 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
             "invalid_router_rate": invalid_router / len(router_steps)
             if router_steps
             else 0.0,
+            "no_op_actions": no_op_actions,
+            "no_op_action_rate": no_op_actions / len(executor_steps)
+            if executor_steps
+            else 0.0,
+            "no_submission_rate": no_submissions / len(episodes) if episodes else 0.0,
+            "premature_stop_rate": premature_stops / len(episodes)
+            if episodes
+            else 0.0,
+            "mean_routing_steps_to_first_code": mean(routing_steps_to_first_code)
+            if routing_steps_to_first_code
+            else None,
+            "mean_model_calls_to_first_code": mean(calls_to_first_code)
+            if calls_to_first_code
+            else None,
         },
         "termination_reasons": dict(
             sorted(Counter(item.termination_reason for item in episodes).items())
