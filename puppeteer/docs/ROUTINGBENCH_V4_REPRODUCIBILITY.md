@@ -21,12 +21,9 @@ Keep three revisions in every reported experiment:
    locks and this documentation.  This revision may advance without changing
    the execution revision, provided the runtime checksum remains identical.
 
-The downloader is pinned by default to the latest publication commit
-`b70803c339a19c767fe9f0718c5218f51d4ed130` in
-`TrangBui/RoleRouteBench`. The frozen Track B data first appeared at
-`cdc67bad1458f6b939f759e3f764f2e93612f424`; the later commit updates
-publication, DOI and discovery metadata without changing the frozen runtime or
-as-run trajectories. The DOI snapshot remains
+The downloader defaults to the frozen Track B revision
+`cdc67bad1458f6b939f759e3f764f2e93612f424` in
+`TrangBui/RoleRouteBench`. The DOI snapshot remains
 `bd936a4b61500e374837702ca08ac631950b2f96`.
 
 ## What is and is not frozen
@@ -101,7 +98,7 @@ The downloader refuses to overwrite an existing directory.  From `puppeteer`:
 ```powershell
 python scripts/download_routingbench_v4.py `
   --repo-id TrangBui/RoleRouteBench `
-  --revision b70803c339a19c767fe9f0718c5218f51d4ed130 `
+  --revision cdc67bad1458f6b939f759e3f764f2e93612f424 `
   --output data/RoutingBench/v4_beta_4d_82_20261102
 ```
 
@@ -110,6 +107,13 @@ the unchanged runner layout (`packs/` and `agent_pools/`).  No packet content is
 edited.
 
 ## Run release gates
+
+GitHub Actions checks out execution revision
+`ee21943c3594c97f51f2082d0671dde44b7d2eb2` in a separate directory.
+It uses the downloader from the current branch to populate that checkout with
+the pinned dataset, then runs the sentinel tests and certification there. For
+local certification, run the commands below in the frozen execution checkout
+with the dataset downloaded by the current downloader.
 
 ```powershell
 python -m unittest tests.test_routingbench_v4_private_isolation -v
