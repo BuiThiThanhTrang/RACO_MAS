@@ -37,25 +37,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check out the frozen execution revision
+        uses: actions/checkout@v4
+        with:
+          ref: ee21943c3594c97f51f2082d0671dde44b7d2eb2
+          path: frozen-release
+          persist-credentials: false
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13.9"
           cache: "pip"
-          cache-dependency-path: puppeteer/requirements-routingbench-v4-release.lock.txt
+          cache-dependency-path: frozen-release/puppeteer/requirements-routingbench-v4-release.lock.txt
 
       - name: Install the locked release environment
+        working-directory: frozen-release/puppeteer
         run: python -m pip install -r requirements-routingbench-v4-release.lock.txt
 
-      - name: Download the pinned dataset when it is not in the checkout
-        run: |
-          if (-not (Test-Path "data/RoutingBench/v4_beta_4d_82_20261102")) {
-            python scripts/download_routingbench_v4.py --output data/RoutingBench/v4_beta_4d_82_20261102
-          }
+      - name: Download the pinned dataset into the frozen checkout
+        run: python scripts/download_routingbench_v4.py --output ../frozen-release/puppeteer/data/RoutingBench/v4_beta_4d_82_20261102
 
       - name: Run private-isolation sentinel tests
+        working-directory: frozen-release/puppeteer
         run: python -m unittest tests.test_routingbench_v4_private_isolation -v
 
       - name: Verify runtime bytes and all packet contexts
+        working-directory: frozen-release/puppeteer
         run: |
           python scripts/certify_routingbench_v4_release.py `
             --release-root data/RoutingBench/v4_beta_4d_82_20261102 `
@@ -67,4 +74,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: routingbench-v4-certification
-          path: puppeteer/reproducibility/certification_report.json
+          path: frozen-release/puppeteer/reproducibility/certification_report.json
