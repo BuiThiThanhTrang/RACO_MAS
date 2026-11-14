@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from typing import Any, Iterable, Mapping
 
 from role_aware.musique_answers import parse_musique_output, parse_musique_result
@@ -251,6 +252,14 @@ def evaluate_musique_collaboration(
     recovery_opportunities = 0
     recovered_failures = 0
     path_reports = []
+    status_counts: Counter[str] = Counter()
+    status_recovery_opportunities: Counter[str] = Counter()
+    status_recoveries: Counter[str] = Counter()
+    explicit_nonfinal_stop_count = 0
+    false_terminal_null_count = 0
+    final_answer_by_role: Counter[str] = Counter()
+    final_paths_with_lineage = 0
+    final_path_count = 0
 
     for path in paths:
         steps = list(path.get("steps") or ())
@@ -261,11 +270,32 @@ def evaluate_musique_collaboration(
         path_handoffs = 0
         path_useful_handoffs = 0
         path_redundant = 0
+        path_references: set[int] = set()
+        pending_statuses: set[str] = set()
+        last_explicit_status = ""
+        path_final_role = ""
 
         for step in steps:
             total_calls += 1
             role = _role(step)
             text = _step_text(step)
+            parsed = parse_musique_result(step.get("result") or {})
+            path_references.update(
+                BenchmarkEvaluator.extract_musique_support_ids(text)
+            )
+            path_references.update(parsed.supporting_paragraph_ids)
+            if parsed.status_explicit:
+                status_counts[parsed.status] += 1
+                last_explicit_status = parsed.status
+                if parsed.explicit_nonfinal:
+                    pending_statuses.add(parsed.status)
+                    status_recovery_opportunities[parsed.status] += 1
+            if parsed.final_answer:
+                last_explicit_status = "FINAL"
+                path_final_role = role
+                for status in pending_statuses:
+                    status_recoveries[status] += 1
+                pending_statuses.clear()
             text_digest = hashlib.sha256(
                 " ".join(text.casefold().split()).encode("utf-8")
             ).hexdigest()
@@ -311,6 +341,25 @@ def evaluate_musique_collaboration(
             previous_role = role
             previous_digest = text_digest
 
+        if last_explicit_status in {
+            "NEEDS_EVIDENCE",
+            "CONFLICT",
+            "NO_ANSWER",
+            "MALFORMED",
+        }:
+            explicit_nonfinal_stop_count += 1
+        raw_prediction = str(
+            path.get("raw_prediction") or path.get("prediction") or ""
+        ).strip()
+        if re.fullmatch(r"(?i)null\s*[,.;:]?|none\s*[,.;:]?", raw_prediction):
+            false_terminal_null_count += 1
+        if raw_prediction:
+            final_path_count += 1
+            if path_references:
+                final_paths_with_lineage += 1
+            if path_final_role:
+                final_answer_by_role[path_final_role] += 1
+
         path_reports.append(
             {
                 "path_uid": path.get("path_uid"),
@@ -345,6 +394,32 @@ def evaluate_musique_collaboration(
     paper_support_scores = BenchmarkEvaluator.musique_support_scores(
         paper_support_ids, gold_support
     )
+    needs_opportunities = status_recovery_opportunities["NEEDS_EVIDENCE"]
+    conflict_opportunities = status_recovery_opportunities["CONFLICT"]
+    routing_diagnostics = {
+        "status_counts": dict(status_counts),
+        "false_terminal_null_count": false_terminal_null_count,
+        "explicit_nonfinal_stop_count": explicit_nonfinal_stop_count,
+        "needs_evidence_recovery_rate": (
+            status_recoveries["NEEDS_EVIDENCE"] / needs_opportunities
+            if needs_opportunities
+            else None
+        ),
+        "conflict_recovery_rate": (
+            status_recoveries["CONFLICT"] / conflict_opportunities
+            if conflict_opportunities
+            else None
+        ),
+        "status_recovery_opportunities": dict(status_recovery_opportunities),
+        "status_recoveries": dict(status_recoveries),
+        "recovery_branch_count": max(0, len(paths) - 1),
+        "evidence_lineage_coverage": (
+            final_paths_with_lineage / final_path_count
+            if final_path_count
+            else None
+        ),
+        "final_answer_by_role": dict(final_answer_by_role),
+    }
     return {
         "milestone_achievement_rate": milestone_rate,
         "milestones_achieved": sorted(achieved & expected_milestones),
@@ -371,6 +446,7 @@ def evaluate_musique_collaboration(
         "paper_compatible_support_f1": paper_support_scores["support_f1"],
         "contribution_by_role": contribution_by_role,
         "path_reports": path_reports,
+        "routing_diagnostics": routing_diagnostics,
         **support_scores,
     }
 

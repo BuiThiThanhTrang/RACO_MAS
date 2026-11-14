@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
 from role_aware.musique_answers import MusiqueAnswerFields, parse_musique_result
-from role_aware.musique_llm_canonicalizer import extract_runtime_answer_with_llm
+from role_aware.musique_llm_canonicalizer import (
+    extract_runtime_answer_with_llm,
+    finalize_path_end_candidate_with_llm,
+)
 
 
 _URL_RE = re.compile(r"https?://[^\s\]\[<>{}\"']+", re.IGNORECASE)
@@ -44,6 +47,43 @@ _MUSIQUE_TERMINAL_ROLES = {
     "Evidence Verifier",
     "Answer Integrator",
 }
+_MMLU_ROOT_ROLES = {
+    "Planner / Decomposer",
+    "General Reasoner",
+    "Problem Decomposer",
+}
+_MMLU_ANSWER_ROLES = {
+    "General Reasoner",
+    "Critic / Verifier",
+    "Reflector",
+    "Integrator / Concluder",
+    "Modifier / Repair",
+}
+_MMLU_SPECIALIST_SOLVER_ROLES = {
+    "Quantitative & Formal Reasoner",
+    "Natural & Life Science Specialist",
+    "Computing & Engineering Specialist",
+    "Social, Legal & Business Specialist",
+    "Humanities & Behavioral Specialist",
+    "Generalist Independent Solver",
+}
+_MMLU_SPECIALIST_VERIFIER_ROLE = "Adversarial Verifier"
+_MMLU_TOOL_ROLES = {
+    "File Analyst",
+    "Academic Researcher",
+    "Web Researcher",
+    "Website Reader",
+    "Python Tool Agent",
+}
+_MMLU_CHOICE_RE = re.compile(
+    r"(?im)(?:final\s+answer|answer|option|choice)\s*(?:is|:|-)?\s*[\[(]?([A-J])[\])]?\b"
+)
+_MMLU_BARE_CHOICE_RE = re.compile(r"^\s*[\[(]?([A-J])[\])]?\s*[.!]?\s*$", re.I)
+_MMLU_DEFECT_RE = re.compile(
+    r"\b(?:incorrect|wrong|flaw|contradiction|misread|calculation error|"
+    r"corrected answer|must be corrected|should instead be)\b",
+    re.I,
+)
 _MEDIA_EXTENSIONS = {
     ".jpg",
     ".jpeg",
@@ -156,6 +196,9 @@ def _musique_semantic_fingerprint(
     candidate_answers: Iterable[str],
     final_answers: Iterable[str],
     intermediate_answers: Iterable[str],
+    output_statuses: Iterable[str] = (),
+    missing_subquestions: Iterable[str] = (),
+    conflicts: Iterable[str] = (),
 ) -> str:
     """Fingerprint meaningful MuSiQue progress, not another verbose rendering.
 
@@ -175,6 +218,13 @@ def _musique_semantic_fingerprint(
         ),
         "intermediate_answers": sorted(
             {_normalized_span(value) for value in intermediate_answers if value}
+        ),
+        "output_statuses": list(output_statuses)[-3:],
+        "missing_subquestions": sorted(
+            {_normalized_span(value) for value in missing_subquestions if value}
+        ),
+        "conflicts": sorted(
+            {_normalized_span(value) for value in conflicts if value}
         ),
     }
     rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
@@ -251,6 +301,9 @@ class StageRoutingGuard:
             extraction.get("reasoning_effort", "low")
         )
         self.llm_extraction_repairs = int(extraction.get("max_repair_attempts", 1))
+        self.path_end_finalization_enabled = bool(
+            extraction.get("path_end_finalization", True)
+        )
         self.llm_extraction_roles = {
             str(value)
             for value in extraction.get(
@@ -273,14 +326,17 @@ class StageRoutingGuard:
             )
         self.audit = None
         self._llm_extraction_cache: dict[str, MusiqueAnswerFields] = {}
+        self._path_end_finalization_cache: dict[str, MusiqueAnswerFields] = {}
 
     def begin_task(self, audit=None) -> None:
         self.audit = audit
         self._llm_extraction_cache = {}
+        self._path_end_finalization_cache = {}
 
     def end_task(self) -> None:
         self.audit = None
         self._llm_extraction_cache = {}
+        self._path_end_finalization_cache = {}
 
     def parse_musique_result(
         self,
@@ -296,6 +352,7 @@ class StageRoutingGuard:
         role_name = str(role or "unknown")
         if (
             parsed.has_candidate
+            or parsed.explicit_nonfinal
             or not self.llm_extraction_enabled
             or role_name not in self.llm_extraction_roles
             or not _is_substantive(result_text)
@@ -345,6 +402,8 @@ class StageRoutingGuard:
                     if status in {"FINAL", "CANDIDATE"}
                     else None
                 ),
+                status=status,
+                status_source="llm_runtime_fallback",
             )
             if self.audit is not None:
                 self.audit.emit(
@@ -369,6 +428,100 @@ class StageRoutingGuard:
         self._llm_extraction_cache[cache_key] = resolved
         return resolved
 
+    def finalize_musique_path_candidate(
+        self,
+        result: Any,
+        *,
+        question: Any,
+        role: Any,
+    ) -> MusiqueAnswerFields:
+        """Gold-blind final gate used only after a path has exhausted execution."""
+
+        parsed = self.parse_musique_result(
+            result,
+            question=question,
+            role=role,
+        )
+        if parsed.final_answer or parsed.explicit_nonfinal or not parsed.candidate_answer:
+            return parsed
+        if not self.llm_extraction_enabled or not self.path_end_finalization_enabled:
+            return parsed
+        result_text = _result_payload_text(result)
+        role_name = str(role or "unknown")
+        cache_key = hashlib.sha256(
+            json.dumps(
+                {
+                    "purpose": "path_end_candidate_finalization",
+                    "question": str(question or ""),
+                    "role": role_name,
+                    "output": result_text,
+                    "model": self.llm_extraction_model,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        cached = self._path_end_finalization_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        scope = (
+            self.audit.call_scope(
+                path_uid="routing-guard",
+                purpose="musique_path_end_candidate_finalization",
+            )
+            if self.audit is not None
+            else nullcontext()
+        )
+        try:
+            with scope:
+                extraction, tokens = finalize_path_end_candidate_with_llm(
+                    result_text,
+                    question=question,
+                    role=role_name,
+                    model=self.llm_extraction_model,
+                    reasoning_effort=self.llm_extraction_effort,
+                    max_repair_attempts=self.llm_extraction_repairs,
+                )
+            answer = str(extraction.get("answer") or "").strip()
+            if extraction.get("status") == "FINAL" and answer:
+                resolved = MusiqueAnswerFields(
+                    final_answer=answer,
+                    candidate_answer=answer,
+                    final_source="llm_path_end_gate",
+                    candidate_source="llm_path_end_gate",
+                    status="FINAL",
+                    status_source="llm_path_end_gate",
+                    supporting_paragraph_ids=parsed.supporting_paragraph_ids,
+                )
+            else:
+                resolved = MusiqueAnswerFields(
+                    status="NO_ANSWER",
+                    status_source="llm_path_end_gate",
+                    supporting_paragraph_ids=parsed.supporting_paragraph_ids,
+                )
+            if self.audit is not None:
+                self.audit.emit(
+                    "musique_path_end_candidate_finalized",
+                    role=role_name,
+                    output_digest=cache_key,
+                    status=resolved.status,
+                    answer=resolved.final_answer,
+                    tokens=int(tokens),
+                    model=self.llm_extraction_model,
+                )
+        except Exception as error:
+            resolved = parsed
+            if self.audit is not None:
+                self.audit.emit(
+                    "musique_path_end_candidate_finalization_failed",
+                    role=role_name,
+                    output_digest=cache_key,
+                    error_type=type(error).__name__,
+                    model=self.llm_extraction_model,
+                )
+        self._path_end_finalization_cache[cache_key] = resolved
+        return resolved
+
     @staticmethod
     def _is_gaia(global_info) -> bool:
         return str(global_info.task.get("type", "")).strip().lower() == "gaia"
@@ -377,6 +530,14 @@ class StageRoutingGuard:
     def _is_musique(global_info) -> bool:
         return str(global_info.task.get("type", "")).strip().lower() == "musique"
 
+    @staticmethod
+    def _is_mmlu(global_info) -> bool:
+        return str(global_info.task.get("type", "")).strip().lower() in {
+            "mmlu",
+            "mmlu-pro",
+            "mmlu_pro",
+        }
+
     def evaluate(
         self, global_info, views: Iterable[Mapping[str, Any]]
     ) -> RoutingSnapshot:
@@ -384,6 +545,10 @@ class StageRoutingGuard:
         available = [view for view in views if bool(view.get("available"))]
         if self.enabled and self._is_musique(global_info):
             return self._evaluate_musique(global_info, available)
+        if self.enabled and self._is_mmlu(global_info) and self.profile.startswith(
+            "mmlu_"
+        ):
+            return self._evaluate_mmlu(global_info, available)
         if not self.enabled or not self._is_gaia(global_info):
             return RoutingSnapshot(
                 state={"enabled": False, "profile": self.profile},
@@ -582,6 +747,284 @@ class StageRoutingGuard:
         state["masked_candidates"] = masked
         return RoutingSnapshot(state, tuple(eligible_ids), tuple(masked))
 
+    @staticmethod
+    def _mmlu_choice(*values: Any) -> str:
+        for value in values:
+            rendered = str(value or "").strip()
+            if not rendered:
+                continue
+            match = _MMLU_CHOICE_RE.search(rendered) or _MMLU_BARE_CHOICE_RE.match(
+                rendered
+            )
+            if match:
+                return match.group(1).upper()
+        return ""
+
+    def _evaluate_mmlu(
+        self, global_info, available: list[Mapping[str, Any]]
+    ) -> RoutingSnapshot:
+        """Expose only observable MMLU progress and mask stage-infeasible roles.
+
+        This profile intentionally uses no capability or backbone scores.  It
+        enforces role preconditions while leaving the decision model free to
+        select among all currently feasible baseline roles.
+        """
+
+        task = global_info.task
+        question = _task_text(task)
+        workflow = list(global_info.workflow.workflow)
+        root = global_info.path_id == -1
+        role_history: list[str] = []
+        evidence_events: list[dict[str, Any]] = []
+        role_state_fingerprints: dict[str, set[str]] = {}
+        candidate_answers: list[str] = []
+        explicit_choices: list[str] = []
+        substantive_output_count = 0
+        last_effective_success = None
+        last_error_type = None
+        last_result_text = ""
+        state_seed = {
+            "question": question,
+            "category": task.get("category"),
+        }
+        specialist_profile = self.profile == "mmlu_specialist_structured_v1"
+        answer_roles = (
+            _MMLU_SPECIALIST_SOLVER_ROLES | {_MMLU_SPECIALIST_VERIFIER_ROLE}
+            if specialist_profile
+            else _MMLU_ANSWER_ROLES
+        )
+
+        for action in workflow:
+            role = str(action.agent_role)
+            action_name = str(action.action.get("action") or "")
+            result_text = _result_payload_text(action.result)
+            answer = _result_answer(action.result)
+            declared_success = str(action.success).strip().lower() == "success"
+            substantive = _is_substantive(result_text)
+            effective_success = declared_success and substantive
+            pre_action_fingerprint = _state_fingerprint(state_seed, evidence_events)
+            role_state_fingerprints.setdefault(role, set()).add(
+                pre_action_fingerprint
+            )
+            role_history.append(role)
+            if effective_success:
+                substantive_output_count += 1
+                choice = self._mmlu_choice(answer, result_text)
+                if role in answer_roles:
+                    candidate_answers.append(answer or result_text)
+                    if choice:
+                        explicit_choices.append(choice)
+                evidence_events.append(
+                    {
+                        "role": role,
+                        "action": action_name,
+                        "choice": choice,
+                        "result_digest": hashlib.sha256(
+                            result_text.encode("utf-8")
+                        ).hexdigest()[:16],
+                    }
+                )
+                last_error_type = None
+            else:
+                last_error_type = (
+                    "declared_failure"
+                    if not declared_success
+                    else "non_substantive_output"
+                )
+            last_effective_success = effective_success
+            last_result_text = result_text
+
+        role_counts = Counter(role_history)
+        current_state_fingerprint = _state_fingerprint(state_seed, evidence_events)
+        role_state_changed = {
+            role: current_state_fingerprint not in fingerprints
+            for role, fingerprints in role_state_fingerprints.items()
+        }
+        candidate_answer_exists = bool(candidate_answers)
+        explicit_choice_exists = bool(explicit_choices)
+        last_role = role_history[-1] if role_history else None
+        defect_identified = bool(
+            last_role in {"Critic / Verifier", "Reflector"}
+            and _MMLU_DEFECT_RE.search(last_result_text)
+        )
+        state = {
+            "enabled": True,
+            "profile": self.profile,
+            "stage": "root" if root else "path",
+            "closed_book": True,
+            "candidate_answer_exists": candidate_answer_exists,
+            "candidate_answer_count": len(candidate_answers),
+            "candidate_answers": candidate_answers[-3:],
+            "explicit_choice_exists": explicit_choice_exists,
+            "explicit_choices": explicit_choices[-3:],
+            "terminal_ready": bool(explicit_choice_exists and last_effective_success),
+            "substantive_output_count": substantive_output_count,
+            "multiple_substantive_outputs": substantive_output_count >= 2,
+            "long_context_available": len(last_result_text) >= 1600,
+            "defect_identified": defect_identified,
+            "last_role": last_role,
+            "last_action": (
+                str(workflow[-1].action.get("action") or "") if workflow else None
+            ),
+            "last_action_status": (
+                None
+                if last_effective_success is None
+                else "success" if last_effective_success else "failure"
+            ),
+            "last_error_type": last_error_type,
+            "path_stalled": bool(last_effective_success is False),
+            "role_history": role_history,
+            "role_call_counts": dict(role_counts),
+            "state_fingerprint": current_state_fingerprint,
+            "role_state_changed": role_state_changed,
+            "remaining_depth": getattr(global_info, "remaining_depth", None),
+        }
+
+        eligible_ids: list[int] = []
+        masked: list[dict[str, Any]] = []
+        for view in available:
+            candidate_id = int(view["candidate_id"])
+            role = str(view.get("role_name") or "")
+            if specialist_profile:
+                reason = self._mmlu_specialist_mask_reason(
+                    role=role,
+                    root=root,
+                    state=state,
+                    role_counts=role_counts,
+                )
+            else:
+                reason = self._mmlu_mask_reason(
+                    role=role,
+                    root=root,
+                    state=state,
+                    role_counts=role_counts,
+                )
+            if reason is None:
+                eligible_ids.append(candidate_id)
+            else:
+                masked.append(
+                    {
+                        "candidate_id": candidate_id,
+                        "role_name": role,
+                        "reason": reason,
+                    }
+                )
+
+        if root and not eligible_ids:
+            fallback_role = (
+                "Generalist Independent Solver"
+                if specialist_profile
+                else "General Reasoner"
+            )
+            for view in available:
+                if str(view.get("role_name") or "") == fallback_role:
+                    candidate_id = int(view["candidate_id"])
+                    eligible_ids.append(candidate_id)
+                    masked = [
+                        item
+                        for item in masked
+                        if int(item["candidate_id"]) != candidate_id
+                    ]
+                    break
+        state["eligible_candidate_ids"] = list(eligible_ids)
+        state["masked_candidates"] = masked
+        return RoutingSnapshot(state, tuple(eligible_ids), tuple(masked))
+
+    def _mmlu_specialist_mask_reason(
+        self,
+        *,
+        role: str,
+        root: bool,
+        state: Mapping[str, Any],
+        role_counts: Counter,
+    ) -> str | None:
+        """Apply only state preconditions for the specialist MMLU pool.
+
+        Domain matching remains a Jev decision over the question, category and
+        role cards.  The guard prevents an invalid root verifier call and exact
+        same-state repetition without introducing capability/backbone scores.
+        """
+
+        known_roles = _MMLU_SPECIALIST_SOLVER_ROLES | {
+            _MMLU_SPECIALIST_VERIFIER_ROLE
+        }
+        if role not in known_roles:
+            return "unknown_mmlu_specialist_role"
+        if root:
+            return (
+                "requires_candidate_answer"
+                if role == _MMLU_SPECIALIST_VERIFIER_ROLE
+                else None
+            )
+        if role_counts.get(role, 0) >= self.max_role_calls:
+            return "role_call_limit_reached"
+        if (
+            self.prevent_same_state_repeat
+            and role_counts.get(role, 0) > 0
+            and not bool(state["role_state_changed"].get(role, False))
+        ):
+            return "role_already_called_without_observable_progress"
+        if role == _MMLU_SPECIALIST_VERIFIER_ROLE:
+            return (
+                None
+                if state["candidate_answer_exists"]
+                else "requires_candidate_answer"
+            )
+        return None
+
+    def _mmlu_mask_reason(
+        self,
+        *,
+        role: str,
+        root: bool,
+        state: Mapping[str, Any],
+        role_counts: Counter,
+    ) -> str | None:
+        if role in _MMLU_TOOL_ROLES:
+            return "closed_book_mmlu_disallows_external_tools"
+        if root:
+            return None if role in _MMLU_ROOT_ROLES else "role_not_valid_at_root"
+        if role_counts.get(role, 0) >= self.max_role_calls:
+            return "role_call_limit_reached"
+        if (
+            self.prevent_same_state_repeat
+            and role_counts.get(role, 0) > 0
+            and not bool(state["role_state_changed"].get(role, False))
+        ):
+            return "role_already_called_without_observable_progress"
+        if role in {"Planner / Decomposer", "Problem Decomposer"}:
+            return "decomposition_only_allowed_at_root"
+        if role == "Critic / Verifier":
+            return (
+                None
+                if state["candidate_answer_exists"]
+                else "requires_candidate_answer"
+            )
+        if role == "Reflector":
+            return (
+                None
+                if state["candidate_answer_exists"] or state["path_stalled"]
+                else "requires_prior_attempt"
+            )
+        if role == "Modifier / Repair":
+            return None if state["defect_identified"] else "requires_identified_defect"
+        if role == "Integrator / Concluder":
+            return (
+                None
+                if state["multiple_substantive_outputs"]
+                else "requires_multiple_substantive_outputs"
+            )
+        if role == "Summarizer":
+            return (
+                None
+                if state["multiple_substantive_outputs"]
+                or state["long_context_available"]
+                else "requires_long_or_multiple_prior_outputs"
+            )
+        if role == "General Reasoner":
+            return None
+        return "unknown_mmlu_baseline_role"
+
     def _evaluate_musique(
         self, global_info, available: list[Mapping[str, Any]]
     ) -> RoutingSnapshot:
@@ -594,11 +1037,17 @@ class StageRoutingGuard:
         candidate_answers: list[str] = []
         final_answers: list[str] = []
         intermediate_answers: list[str] = []
+        output_statuses: list[str] = []
+        missing_subquestions: list[str] = []
+        conflict_descriptions: list[str] = []
+        final_answer_lineage: list[dict[str, Any]] = []
         paragraph_ids: set[int] = set()
         intermediate_answer_count = 0
         substantive_output_count = 0
         last_error_type = None
         last_effective_success = None
+        last_output_status = "NO_ANSWER"
+        last_output_status_explicit = False
         state_seed = {
             "question": _task_text(task),
             "paragraph_ids": task.get("paragraph_ids") or (),
@@ -625,6 +1074,9 @@ class StageRoutingGuard:
                     candidate_answers,
                     final_answers,
                     intermediate_answers,
+                    output_statuses,
+                    missing_subquestions,
+                    conflict_descriptions,
                 )
                 if dynamic
                 else _state_fingerprint(state_seed, evidence_events)
@@ -639,9 +1091,16 @@ class StageRoutingGuard:
                     r"(?i)(?<![A-Za-z0-9])P\s*(\d+)\b", result_text
                 )
             }
+            references.update(parsed_answer.supporting_paragraph_ids)
             paragraph_ids.update(references)
             if effective_success:
                 substantive_output_count += 1
+                if parsed_answer.status_explicit:
+                    output_statuses.append(parsed_answer.status)
+                if parsed_answer.missing_subquestion:
+                    missing_subquestions.append(parsed_answer.missing_subquestion)
+                if parsed_answer.conflict_description:
+                    conflict_descriptions.append(parsed_answer.conflict_description)
                 if role == "Bridge Entity Reasoner" and parsed_answer.intermediate_answer:
                     intermediate_answer_count += 1
                     intermediate_answers.append(parsed_answer.intermediate_answer)
@@ -649,16 +1108,31 @@ class StageRoutingGuard:
                     candidate_answers.append(answer)
                 if parsed_answer.final_answer:
                     final_answers.append(parsed_answer.final_answer)
+                    final_answer_lineage.append(
+                        {
+                            "answer": parsed_answer.final_answer,
+                            "source_role": role,
+                            "source_action": action_name,
+                            "evidence_paragraph_ids": sorted(paragraph_ids),
+                            "source_event_index": len(evidence_events),
+                        }
+                    )
                 evidence_events.append(
                     {
+                        "event_index": len(evidence_events),
                         "role": role,
                         "action": action_name,
                         "references": sorted(references),
+                        "inherited_references": sorted(paragraph_ids),
                         "result_digest": hashlib.sha256(
                             result_text.encode("utf-8")
                         ).hexdigest()[:16],
                         "answer": answer,
                         "final_answer": parsed_answer.final_answer,
+                        "status": parsed_answer.status,
+                        "status_explicit": parsed_answer.status_explicit,
+                        "missing_subquestion": parsed_answer.missing_subquestion,
+                        "conflict_description": parsed_answer.conflict_description,
                     }
                 )
                 last_error_type = None
@@ -667,6 +1141,8 @@ class StageRoutingGuard:
                     "declared_failure" if not declared_success else "non_substantive_output"
                 )
             last_effective_success = effective_success
+            last_output_status = parsed_answer.status
+            last_output_status_explicit = parsed_answer.status_explicit
 
         role_counts = Counter(role_history)
         current_state_fingerprint = (
@@ -676,6 +1152,9 @@ class StageRoutingGuard:
                 candidate_answers,
                 final_answers,
                 intermediate_answers,
+                output_statuses,
+                missing_subquestions,
+                conflict_descriptions,
             )
             if dynamic
             else _state_fingerprint(state_seed, evidence_events)
@@ -687,9 +1166,18 @@ class StageRoutingGuard:
         last_role = role_history[-1] if role_history else None
         candidate_answer_exists = bool(candidate_answers)
         final_answer_exists = bool(final_answers)
+        explicit_nonfinal_status = bool(
+            last_output_status_explicit
+            and last_output_status
+            in {"NEEDS_EVIDENCE", "CONFLICT", "NO_ANSWER", "MALFORMED"}
+        )
+        unresolved_dependency = bool(
+            explicit_nonfinal_status or last_output_status == "CANDIDATE"
+        )
         integrator_required = bool(
             candidate_answer_exists
             and not final_answer_exists
+            and not explicit_nonfinal_status
             and last_role
             in {"Evidence Retriever", "Evidence Verifier", "Answer Integrator"}
         )
@@ -703,6 +1191,9 @@ class StageRoutingGuard:
             **({} if dynamic else {"hop_count": int(task.get("hop_count") or 0)}),
             "paragraph_reference_count": len(paragraph_ids),
             "referenced_paragraph_ids": sorted(paragraph_ids),
+            "evidence_lineage_exists": bool(paragraph_ids),
+            "evidence_lineage": evidence_events[-8:],
+            "final_answer_lineage": final_answer_lineage[-3:],
             "intermediate_answer_count": intermediate_answer_count,
             "substantive_output_count": substantive_output_count,
             "candidate_answer_exists": candidate_answer_exists,
@@ -712,6 +1203,22 @@ class StageRoutingGuard:
             "final_answer_count": len(final_answers),
             "final_answers": list(dict.fromkeys(final_answers))[-3:],
             "integrator_required": integrator_required,
+            "current_output_status": last_output_status,
+            "output_status_explicit": last_output_status_explicit,
+            "unresolved_dependency": unresolved_dependency,
+            "missing_subquestion": (
+                missing_subquestions[-1]
+                if explicit_nonfinal_status and missing_subquestions
+                else ""
+            ),
+            "conflict_description": (
+                conflict_descriptions[-1]
+                if last_output_status == "CONFLICT" and conflict_descriptions
+                else ""
+            ),
+            "has_conflicting_evidence": bool(
+                last_output_status == "CONFLICT" and last_output_status_explicit
+            ),
             "last_role": last_role,
             "last_action_status": (
                 None
@@ -730,7 +1237,19 @@ class StageRoutingGuard:
                 and not role_state_changed.get(last_role, True)
             ),
             "remaining_depth": getattr(global_info, "remaining_depth", None),
-            "path_stalled": bool(last_effective_success is False),
+            "recovery_depth_active": bool(
+                getattr(global_info, "recovery_depth_active", False)
+            ),
+            "recovery_steps_remaining": int(
+                getattr(global_info, "recovery_steps_remaining", 0) or 0
+            ),
+            "path_stalled": bool(
+                last_effective_success is False
+                or (
+                    last_output_status_explicit
+                    and last_output_status in {"MALFORMED", "NO_ANSWER"}
+                )
+            ),
         }
 
         eligible_ids: list[int] = []
@@ -791,6 +1310,13 @@ class StageRoutingGuard:
 
         if role_counts.get(role, 0) >= self.max_role_calls:
             return "role_call_limit_reached"
+        recovery_finalization_slot = bool(
+            state.get("recovery_depth_active")
+            and int(state.get("recovery_steps_remaining") or 0) <= 1
+            and state.get("candidate_answer_exists")
+        )
+        if recovery_finalization_slot and role != "Answer Integrator":
+            return "recovery_finalization_slot_requires_integrator"
         if (
             self.prevent_same_state_repeat
             and role_counts.get(role, 0) > 0

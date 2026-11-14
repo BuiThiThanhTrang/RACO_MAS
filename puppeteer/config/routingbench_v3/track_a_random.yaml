@@ -1,0 +1,14 @@
+seed: 42
+output_dir: runs
+
+benchmark:
+  data_dir: data/RoutingBench/v3_alpha
+  split: development
+  track: a
+
+router:
+  type: random
+
+execution:
+  mode: live
+  actor_model: qwen-3.5-9b

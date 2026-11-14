@@ -1,0 +1,19 @@
+seed: 42
+output_dir: runs
+benchmark:
+  data_dir: data/RoutingBench/v4_beta
+  split: development
+  track: all
+  memory_view: structured
+router:
+  type: llm
+  provider: openrouter
+  model: gpt-6-sol-openrouter
+  orchestration_profile: structured
+  reasoning_effort: low
+  observable_rejection_guard_enabled: true
+  max_repair_attempts: 1
+execution:
+  mode: deterministic
+  actor_model: gemini-2.5-flash
+  max_output_attempts: 2

@@ -1,0 +1,21 @@
+{
+  "config_version": "roleroutebench.track_a.config.v1",
+  "output_dir": "data/RoleRouteBench/track_a_4d_live_v1",
+  "sample": {
+    "count": 100,
+    "seed": 20261105,
+    "method": "uniform_without_replacement"
+  },
+  "labeler": {
+    "model": "gpt-6.1-terra",
+    "reasoning_effort": "high",
+    "max_output_tokens": 25000,
+    "prompt_version": "roleroutebench.track_a.terra.v1",
+    "max_attempts": 2
+  },
+  "human_review": {
+    "required": true,
+    "second_review_accept_all_fraction": 0.1
+  }
+}
+

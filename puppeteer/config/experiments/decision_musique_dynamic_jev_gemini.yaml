@@ -41,6 +41,7 @@ policy:
     prevent_role_repeat_same_state: true
     answer_extraction:
       enabled: true
+      path_end_finalization: true
       model: gpt-6-luna-openrouter
       reasoning_effort: low
       max_repair_attempts: 1
@@ -54,14 +55,18 @@ policy:
     typed_blackboard: true
     dataset_scope_gate: true
     max_previous_outputs: 5
+    capability_scoring:
+      enabled: false
     capability_shortlist:
-      enabled: true
+      enabled: false
       max_candidates: 5
       min_candidates: 2
     adaptive_branching:
       enabled: true
       initial_paths: 1
       max_branch_options: 6
+      allow_independent_diagnosis: false
+      allow_stall_branching: false
     terminal_gate:
       enabled: true
       require_evidence_for_musique: true
@@ -83,8 +88,9 @@ policy:
 
 global_config:
   graph:
-    max_width: 2
+    max_width: 3
     max_depth: 5
+    musique_recovery_depth_credit: 2
   aggregation:
     mode: majority_verifier
     verifier_model: gpt-6-luna-openrouter

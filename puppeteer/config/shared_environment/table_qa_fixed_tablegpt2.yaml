@@ -1,0 +1,18 @@
+packet_root: data/RoutingBench/structured_table_qa_v1_40
+output_root: runs
+domain: structured_data_processing
+role_cards: config/shared_environment/table_qa_roles.json
+seed: 42
+max_calls: 12
+workers: 1
+router:
+  type: table_qa_fixed
+executor:
+  provider: modal
+  base_url: https://bt299784--tablegpt2-7b-serve.us-east.modal.run/v1
+  model: tablegpt/TableGPT2-7B
+  api_key_env: TABLEGPT_MODAL_API_KEY
+  max_tokens: 4096
+  timeout_seconds: 300
+  transport_retries: 5
+  max_tool_calls: 1

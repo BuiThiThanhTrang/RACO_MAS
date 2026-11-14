@@ -1,0 +1,90 @@
+mode: frozen
+seed: 42
+personas_path: personas/role_aware/mmlu_pro_heterogeneous_pool.jsonl
+output_dir: runs
+
+dataset:
+  name: MMLU-Pro
+  mode: train
+  data_limit: 400
+  data_start: 0
+  split_seed: 42
+
+tools:
+  allowed: []
+
+profiles:
+  mode: static_role_cards
+  update_enabled: false
+  include_uncertainty: false
+  reset_scope: run
+  initialization:
+    source: role_cards
+    path: null
+    required_for_train: false
+
+experience:
+  mode: none
+  reset_scope: run
+  retrieval_limit: 20
+
+policy:
+  type: decision_model_planner
+  policy_mode: frozen
+  routing_input:
+    exclude_task_fields: [Answer, id]
+  routing_guard:
+    enabled: true
+    profile: mmlu_specialist_structured_v1
+    max_role_calls_per_path: 2
+    prevent_role_repeat_same_state: true
+  routing_harness:
+    enabled: true
+    typed_blackboard: true
+    dataset_scope_gate: true
+    max_previous_outputs: 2
+    capability_scoring:
+      enabled: false
+    capability_shortlist:
+      enabled: false
+      max_candidates: 7
+      min_candidates: 1
+    # Sequential root selection lets Jev stop after one or two paths; W=3 is
+    # an upper bound rather than a required number of paths.
+    adaptive_branching:
+      enabled: false
+      initial_paths: 1
+      max_branch_options: 0
+      allow_independent_diagnosis: false
+      allow_stall_branching: false
+    terminal_gate:
+      enabled: true
+    prompt_guidance:
+      - Match the current question and observable category to role-card expertise; do not use backbone identity or capability scores.
+      - Width three is a maximum. Select the smallest non-redundant root set that covers the task.
+      - Use Generalist Independent Solver for mixed or uncertain domains; add another specialist only for genuinely complementary analysis.
+      - Adversarial Verifier requires a substantive candidate answer and should test or correct that candidate rather than restart the solution.
+      - STOP is valid only after the current path contains an explicit final option letter A-J.
+  decision:
+    provider: openrouter
+    model: typesafe/jev-1.13
+    api_key_env: OPENROUTER_API_KEY
+    timeout_seconds: 30
+    max_retries: 5
+    retry_backoff_seconds: 2
+    max_retry_delay_seconds: 30
+    max_options: 255
+    root_selection_mode: sequential
+    experience_limit: 20
+    audit_input: true
+    semantic_diagnosis:
+      enabled: false
+      include_root: false
+
+global_config:
+  graph:
+    max_width: 4
+    max_depth: 2
+  aggregation:
+    mode: majority
+    seed: 42

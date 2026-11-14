@@ -183,14 +183,15 @@ def load_experiment_config(
         if not decision.get("model"):
             raise ValueError("decision_model_planner requires policy.decision.model")
         if str(decision.get("provider", "openrouter")) not in {
+            "openai",
             "openrouter",
             "jev",
             "cloudflare",
             "systemone",
         }:
             raise ValueError(
-                "policy.decision.provider must be openrouter, jev, cloudflare, "
-                "or systemone"
+                "policy.decision.provider must be openai, openrouter, jev, "
+                "cloudflare, or systemone"
             )
         if int(decision.get("max_options", 255)) < 1:
             raise ValueError("policy.decision.max_options must be positive")
@@ -206,10 +207,13 @@ def load_experiment_config(
             "gaia_stage_v2",
             "musique_stage_v1",
             "musique_dynamic_v2",
+            "mmlu_baseline_structured_v1",
+            "mmlu_specialist_structured_v1",
         }:
             raise ValueError(
                 "policy.routing_guard.profile must be gaia_stage_v1, gaia_stage_v2, "
-                "musique_stage_v1, or musique_dynamic_v2"
+                "musique_stage_v1, musique_dynamic_v2, or "
+                "mmlu_baseline_structured_v1 or mmlu_specialist_structured_v1"
             )
         if int(routing_guard.get("max_role_calls_per_path", 1)) < 1:
             raise ValueError(

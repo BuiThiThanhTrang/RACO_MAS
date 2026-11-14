@@ -1,0 +1,44 @@
+[
+  {
+    "agent_id": "Table Inspector",
+    "role_goal": "Read a relevant bounded slice of the public table. Choose columns and a zero-based row offset as needed.",
+    "use_when": ["Relevant rows are missing from the visible preview", "Column labels, units or the table layout need inspection"],
+    "expected_outputs": ["An inspection artifact with public rows and stable row and column IDs"]
+  },
+  {
+    "agent_id": "Header Resolver",
+    "role_goal": "Identify the public row and column IDs corresponding to the question's grouped labels.",
+    "use_when": ["A label has multiple parent groups", "The question refers to one subgroup in a hierarchical table"],
+    "expected_outputs": ["A header mapping backed by the selected public IDs"]
+  },
+  {
+    "agent_id": "Evidence Selector",
+    "role_goal": "Select relevant rows and columns by explicit IDs or typed conditions. Include the columns needed for the later calculation.",
+    "use_when": ["The question restricts rows or columns", "Verification identifies a missing or incorrectly selected group"],
+    "expected_outputs": ["A selection with row IDs, projected cells and the filters used"]
+  },
+  {
+    "agent_id": "Numerical Analyst",
+    "role_goal": "Execute a lookup or numeric operation against the table or a fresh selection. Set submit to true if the calculated values already answer the question.",
+    "use_when": ["The answer requires a numeric operation or retrieving values from known rows", "A verified scope can be reused with a corrected operation"],
+    "expected_outputs": ["A calculation tied to the data it used and, when complete, a typed answer"]
+  },
+  {
+    "agent_id": "Answer Composer",
+    "role_goal": "Submit the requested typed list of values with the required order and units. Cite fresh evidence IDs or exact cells in the visible preview.",
+    "use_when": ["A visible value already answers the question", "The answer needs ordering or representation beyond the current calculation"],
+    "expected_outputs": ["A typed candidate supported by public artifact IDs"]
+  },
+  {
+    "agent_id": "Evidence Verifier",
+    "role_goal": "Check whether the current candidate answers the question using its public evidence. Supply an issue only when a concrete scope, operation, ordering or unit problem is observed. Use empty arguments if the evidence is sufficient.",
+    "use_when": ["A candidate answer and its fresh evidence are available"],
+    "expected_outputs": ["A public verification result tied to the current candidate"]
+  },
+  {
+    "agent_id": "Failure Diagnoser",
+    "role_goal": "Explain the public failure and identify whether headers, selection, calculation or answer representation needs revision.",
+    "use_when": ["A public error is present and its cause is unclear"],
+    "expected_outputs": ["A diagnosis grounded in the observed error and a specific step to revisit"]
+  }
+]

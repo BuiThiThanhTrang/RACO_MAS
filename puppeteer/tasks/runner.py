@@ -503,7 +503,7 @@ class BenchmarkRunner:
             data_item, policy=FixedTeammatePolicy(teammate_id)
         )
         reasoning.start(None)
-        final_answer, _ = reasoning.n_step(self.max_step_num)
+        final_answer, _ = reasoning.n_step(reasoning.max_runtime_steps)
         return final_answer
 
     def run_reasoning(self, data_item):
@@ -517,7 +517,7 @@ class BenchmarkRunner:
             policy_fingerprint = digest(self.policy.policy_network.state_dict())
         frozen = (digest(self.profile_store.state_dict()), policy_fingerprint) \
             if self.dataset_mode != "train" else None
-        final_ans, _ = reasoning.n_step(self.max_step_num)
+        final_ans, _ = reasoning.n_step(reasoning.max_runtime_steps)
         if hasattr(self.policy, "state_fingerprint"):
             policy_fingerprint_after = self.policy.state_fingerprint()
         else:

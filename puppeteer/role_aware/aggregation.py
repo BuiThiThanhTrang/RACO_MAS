@@ -185,7 +185,7 @@ def aggregate_gaia_candidates(
 
 def aggregate_musique_candidates(
     candidates, *, mode="majority", seed=42, task_id="", question="", verifier=None,
-    fallback_extractor=None,
+    fallback_extractor=None, candidates_are_committed=False,
 ):
     """Aggregate open MuSiQue answers while preserving candidate-only selection."""
     from tasks.evaluator import BenchmarkEvaluator
@@ -196,7 +196,12 @@ def aggregate_musique_candidates(
     for index, candidate in enumerate(candidates):
         if candidate is None or not str(candidate).strip():
             continue
-        canonical = BenchmarkEvaluator.extract_musique_answer(candidate)
+        if candidates_are_committed:
+            canonical = str(candidate).strip()
+            if re.fullmatch(r"(?i)null\s*[,.;:]?|none\s*[,.;:]?", canonical):
+                canonical = ""
+        else:
+            canonical = BenchmarkEvaluator.extract_musique_answer(candidate)
         if not canonical and fallback_extractor is not None:
             extracted = fallback_extractor(candidate, index)
             if isinstance(extracted, dict):

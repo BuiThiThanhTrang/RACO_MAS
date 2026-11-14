@@ -24,6 +24,7 @@ from inference.policy.decision_planner import (
     DecisionPlannerPolicy,
 )
 from inference.policy.route_bundle import RouteBundleBuilder
+from inference.policy.stage_routing import StageRoutingGuard
 from inference.reasoning.reasoning import GraphReasoning
 from role_aware.audit_trace import AuditTrace
 from role_aware.routing_profile_store import StaticRoutingProfileStore
@@ -41,6 +42,36 @@ PUPPETEER_BASELINE_NO_TRAIN_POOL = (
     / "personas"
     / "role_aware"
     / "puppeteer_baseline_roles_no_train_pool.jsonl"
+)
+PUPPETEER_BASELINE_QWEN35_STRUCTURED_POOL = (
+    PROJECT_DIR
+    / "personas"
+    / "role_aware"
+    / "puppeteer_baseline_roles_qwen35_9b_structured_pool.jsonl"
+)
+PUPPETEER_BASELINE_QWEN35_STRUCTURED_CONFIG = (
+    PROJECT_DIR
+    / "config"
+    / "experiments"
+    / "decision_mmlu_pro_baseline_qwen35_structured_jev.yaml"
+)
+PUPPETEER_BASELINE_QWEN35_NAIVE_CONFIG = (
+    PROJECT_DIR
+    / "config"
+    / "experiments"
+    / "decision_mmlu_pro_baseline_qwen35_naive_jev.yaml"
+)
+MMLU_HETEROGENEOUS_STRUCTURED_CONFIG = (
+    PROJECT_DIR
+    / "config"
+    / "experiments"
+    / "decision_mmlu_pro_heterogeneous_structured_jev_train.yaml"
+)
+MMLU_HETEROGENEOUS_NAIVE_CONFIG = (
+    PROJECT_DIR
+    / "config"
+    / "experiments"
+    / "decision_mmlu_pro_heterogeneous_naive_jev_train.yaml"
 )
 MUSIQUE_POOL = (
     PROJECT_DIR / "personas" / "role_aware" / "musique_gemini25_flash_pool.jsonl"
@@ -378,6 +409,241 @@ class DecisionPlannerTests(unittest.TestCase):
             profiles["Website Reader"]["avoid_when"],
         )
 
+    def test_structured_baseline_pool_is_homogeneous_and_role_compatible(self):
+        original = load_teammate_specs(PUPPETEER_BASELINE_NO_TRAIN_POOL)
+        structured = validate_decision_planner_pool(
+            load_teammate_specs(PUPPETEER_BASELINE_QWEN35_STRUCTURED_POOL)
+        )
+
+        self.assertEqual(
+            [spec.role_card.role_name for spec in structured],
+            [spec.role_card.role_name for spec in original],
+        )
+        self.assertEqual({spec.backbone for spec in structured}, {"qwen-3.5-9b"})
+        self.assertEqual(sum(spec.available for spec in structured), 13)
+        self.assertFalse(structured[-1].available)
+        self.assertTrue(
+            all(not spec.role_card.capability_prior for spec in structured)
+        )
+
+        config = load_experiment_config(
+            PUPPETEER_BASELINE_QWEN35_STRUCTURED_CONFIG
+        )
+        self.assertEqual(config.tools.allowed, ())
+        self.assertEqual(
+            config.policy["routing_guard"]["profile"],
+            "mmlu_baseline_structured_v1",
+        )
+        self.assertEqual(
+            set(config.policy["routing_input"]["exclude_task_fields"]),
+            {"Answer", "id"},
+        )
+        self.assertFalse(
+            config.policy["routing_harness"]["capability_scoring"]["enabled"]
+        )
+        self.assertFalse(
+            config.policy["routing_harness"]["capability_shortlist"]["enabled"]
+        )
+
+    def test_mmlu_baseline_guard_enforces_observable_role_preconditions(self):
+        graph, _ = self._graph(PUPPETEER_BASELINE_QWEN35_STRUCTURED_POOL)
+        guard = StageRoutingGuard(
+            {
+                "enabled": True,
+                "profile": "mmlu_baseline_structured_v1",
+                "max_role_calls_per_path": 2,
+                "prevent_role_repeat_same_state": True,
+            }
+        )
+        root_info = GlobalInfo(
+            -1,
+            ".",
+            {
+                "type": "MMLU-Pro",
+                "Question": "Which option is correct? A: first B: second",
+                "Answer": "B",
+                "category": "other",
+            },
+        )
+        root = guard.evaluate(root_info, graph.public_agent_views())
+        root_roles = {
+            view["role_name"]
+            for view in root.eligible_views(graph.public_agent_views())
+        }
+        self.assertEqual(
+            root_roles,
+            {"Planner / Decomposer", "General Reasoner", "Problem Decomposer"},
+        )
+
+        path_info = GlobalInfo(
+            0,
+            ".",
+            {
+                "type": "MMLU-Pro",
+                "Question": "Which option is correct? A: first B: second",
+                "Answer": "B",
+                "category": "other",
+            },
+        )
+        path_info.remaining_depth = 1
+        path_info.workflow.add_action(
+            Action(
+                {"action": "reasoning", "parameter": ""},
+                {
+                    "step_data": "The second option follows from the premise. FINAL ANSWER: B",
+                    "answer": "B",
+                },
+                "Success",
+                "General Reasoner",
+                "qwen-3.5-9b",
+            )
+        )
+        path = guard.evaluate(path_info, graph.public_agent_views())
+        path_roles = {
+            view["role_name"]
+            for view in path.eligible_views(graph.public_agent_views())
+        }
+        self.assertTrue(path.state["terminal_ready"])
+        self.assertIn("Critic / Verifier", path_roles)
+        self.assertIn("Reflector", path_roles)
+        self.assertNotIn("Modifier / Repair", path_roles)
+        self.assertNotIn("Integrator / Concluder", path_roles)
+        self.assertNotIn("Web Researcher", path_roles)
+
+    def test_structured_mmlu_router_hides_gold_and_receives_guidance(self):
+        config = load_experiment_config(
+            PUPPETEER_BASELINE_QWEN35_STRUCTURED_CONFIG
+        )
+        graph, registry = self._graph(PUPPETEER_BASELINE_QWEN35_STRUCTURED_POOL)
+        client = FakeDecisionClient(["candidate__6", "finish_bundle"])
+        policy = DecisionPlannerPolicy(
+            graph,
+            ActionGraph(allowed_tools=()),
+            config.policy,
+            config.to_dict(),
+            decision_client=client,
+        )
+        info = GlobalInfo(
+            -1,
+            ".",
+            {
+                "type": "MMLU-Pro",
+                "Question": "Which option is correct? A: first B: second",
+                "Answer": "B",
+                "id": "hidden-from-router",
+                "category": "other",
+            },
+        )
+        info.path_uid = "root"
+        info.remaining_depth = 2
+
+        proposal = policy.propose(info, 3)
+
+        self.assertEqual(
+            proposal["actions"], [registry.agent_config[6].teammate_id]
+        )
+        state = client.calls[0][0]
+        self.assertNotIn("Answer", state["task"])
+        self.assertNotIn("id", state["task"])
+        self.assertEqual(state["task"]["category"], "other")
+        self.assertIn("routing_guidance", state["constraints"])
+        self.assertEqual(
+            state["routing_state"]["eligible_candidate_ids"], [5, 6, 9]
+        )
+
+    def test_naive_mmlu_ablation_keeps_pool_and_budget_without_harness(self):
+        structured = load_experiment_config(
+            PUPPETEER_BASELINE_QWEN35_STRUCTURED_CONFIG
+        )
+        naive = load_experiment_config(PUPPETEER_BASELINE_QWEN35_NAIVE_CONFIG)
+
+        self.assertEqual(naive.personas_path, structured.personas_path)
+        self.assertEqual(naive.seed, structured.seed)
+        self.assertEqual(naive.dataset, structured.dataset)
+        self.assertEqual(naive.tools, structured.tools)
+        self.assertEqual(naive.global_config, structured.global_config)
+        self.assertEqual(
+            naive.policy["routing_input"], structured.policy["routing_input"]
+        )
+        self.assertEqual(naive.policy["decision"], structured.policy["decision"])
+        self.assertNotIn("routing_guard", naive.policy)
+        self.assertNotIn("routing_harness", naive.policy)
+
+    def test_heterogeneous_train_configs_are_controlled_ablation(self):
+        structured = load_experiment_config(MMLU_HETEROGENEOUS_STRUCTURED_CONFIG)
+        naive = load_experiment_config(MMLU_HETEROGENEOUS_NAIVE_CONFIG)
+
+        self.assertEqual(naive.personas_path, structured.personas_path)
+        self.assertEqual(
+            naive.personas_path,
+            "personas/role_aware/mmlu_pro_heterogeneous_pool.jsonl",
+        )
+        self.assertEqual(naive.dataset, structured.dataset)
+        self.assertEqual(naive.dataset.mode, "train")
+        self.assertEqual(naive.dataset.data_limit, 400)
+        self.assertEqual(naive.tools, structured.tools)
+        self.assertEqual(naive.global_config, structured.global_config)
+        self.assertEqual(
+            naive.policy["routing_input"], structured.policy["routing_input"]
+        )
+        self.assertEqual(naive.policy["decision"], structured.policy["decision"])
+        self.assertNotIn("routing_guard", naive.policy)
+        self.assertNotIn("routing_harness", naive.policy)
+        self.assertEqual(
+            structured.policy["routing_guard"]["profile"],
+            "mmlu_specialist_structured_v1",
+        )
+        self.assertFalse(
+            structured.policy["routing_harness"]["capability_scoring"]["enabled"]
+        )
+
+    def test_mmlu_specialist_guard_requires_candidate_before_verifier(self):
+        graph, _ = self._graph(MMLU_HETEROGENEOUS_POOL)
+        guard = StageRoutingGuard(
+            {
+                "enabled": True,
+                "profile": "mmlu_specialist_structured_v1",
+                "max_role_calls_per_path": 2,
+                "prevent_role_repeat_same_state": True,
+            }
+        )
+        task = {
+            "type": "MMLU-Pro",
+            "Question": "Which option is correct? A: first B: second",
+            "Answer": "B",
+            "category": "other",
+        }
+        root_info = GlobalInfo(-1, ".", task)
+        root = guard.evaluate(root_info, graph.public_agent_views())
+        root_roles = {
+            view["role_name"]
+            for view in root.eligible_views(graph.public_agent_views())
+        }
+        self.assertEqual(len(root_roles), 6)
+        self.assertNotIn("Adversarial Verifier", root_roles)
+
+        path_info = GlobalInfo(0, ".", task)
+        path_info.remaining_depth = 1
+        path_info.workflow.add_action(
+            Action(
+                {"action": "reasoning", "parameter": ""},
+                {
+                    "step_data": "The premise supports the second option. FINAL ANSWER: B",
+                    "answer": "B",
+                },
+                "Success",
+                "Generalist Independent Solver",
+                "qwen-3.5-9b",
+            )
+        )
+        path = guard.evaluate(path_info, graph.public_agent_views())
+        path_roles = {
+            view["role_name"]
+            for view in path.eligible_views(graph.public_agent_views())
+        }
+        self.assertTrue(path.state["terminal_ready"])
+        self.assertIn("Adversarial Verifier", path_roles)
+
     def test_route_choices_expose_stage_constraints_to_decision_model(self):
         graph, _ = self._graph(
             PUPPETEER_BASELINE_NO_TRAIN_POOL,
@@ -619,6 +885,136 @@ class DecisionPlannerTests(unittest.TestCase):
         self.assertEqual(captured["request"]["model"], "typesafe/jev-1.13")
         self.assertEqual(result.choice, "stop")
         self.assertEqual(result.input_tokens, 23)
+
+    def test_openai_client_translates_choice_contract_and_response(self):
+        captured = {}
+
+        def handler(request):
+            captured["url"] = str(request.url)
+            captured["authorization"] = request.headers["Authorization"]
+            captured["request"] = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(
+                200,
+                json={
+                    "model": "gpt-6-luna",
+                    "answers": [
+                        {
+                            "type": "choice",
+                            "name": "next_action",
+                            "choice": "agent_02",
+                            "confidence": 0.91,
+                            "probabilities": [
+                                {"value": "agent_02", "probability": 0.94},
+                                {"value": "STOP", "probability": 0.06},
+                            ],
+                        }
+                    ],
+                    "usage": {"input_tokens": 31, "output_tokens": 0},
+                },
+            )
+
+        from unittest.mock import patch
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "openai-test-key"}):
+            client = SystemOneDecisionClient(
+                {
+                    "provider": "openai",
+                    "model": "gpt-6-luna",
+                    "max_retries": 0,
+                },
+                http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+            )
+            result = client.decide(
+                {"task": "Route this task", "state": {"step_index": 1}},
+                {
+                    "next_action": {
+                        "type": "choice",
+                        "instructions": "Choose the next agent.",
+                        "criteria": {
+                            "agent_02": "Retrieve missing evidence.",
+                            "STOP": "The final artifact is committed.",
+                        },
+                    }
+                },
+                "next_action",
+            )
+
+        self.assertEqual(captured["url"], "https://api.openai.com/v1/decisions")
+        self.assertEqual(captured["authorization"], "Bearer openai-test-key")
+        payload = captured["request"]
+        self.assertEqual(payload["model"], "gpt-6-luna")
+        self.assertEqual(json.loads(payload["input"])["state"]["step_index"], 1)
+        self.assertEqual(payload["questions"][0]["type"], "choice")
+        self.assertEqual(
+            [item["value"] for item in payload["questions"][0]["choices"]],
+            ["agent_02", "STOP"],
+        )
+        self.assertEqual(result.choice, "agent_02")
+        self.assertEqual(result.probabilities["agent_02"], 0.94)
+        self.assertEqual(result.input_tokens, 31)
+
+    def test_openai_client_normalizes_predicate_and_score_answers(self):
+        captured = {}
+
+        def handler(request):
+            captured["request"] = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(
+                200,
+                json={
+                    "model": "gpt-6-luna",
+                    "answers": [
+                        {
+                            "type": "predicate",
+                            "name": "candidate_conflict_present",
+                            "probability": 0.8,
+                        },
+                        {
+                            "type": "score",
+                            "name": "progress_since_previous_step",
+                            "score": 2.1,
+                            "confidence": 0.7,
+                            "probabilities": [
+                                {"value": 0, "label": "None", "probability": 0.1},
+                                {"value": 1, "label": "Partial", "probability": 0.2},
+                                {"value": 2, "label": "Useful", "probability": 0.7},
+                            ],
+                        },
+                    ],
+                    "usage": {"input_tokens": 19},
+                },
+            )
+
+        from unittest.mock import patch
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "openai-test-key"}):
+            client = SystemOneDecisionClient(
+                {"provider": "openai", "model": "gpt-6-luna", "max_retries": 0},
+                http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+            )
+            judgment = client.judge(
+                {"state": "observable"},
+                {
+                    "candidate_conflict_present": {
+                        "type": "noul",
+                        "instructions": "Is there a material conflict?",
+                    },
+                    "progress_since_previous_step": {
+                        "type": "score",
+                        "instructions": "How much progress was made?",
+                        "criteria": ["None", "Partial", "Useful"],
+                    },
+                },
+            )
+
+        types = [item["type"] for item in captured["request"]["questions"]]
+        self.assertEqual(types, ["predicate", "score"])
+        self.assertEqual(
+            judgment.answers["candidate_conflict_present"]["noul"], 0.8
+        )
+        self.assertEqual(
+            judgment.answers["progress_since_previous_step"]["score"], 2.1
+        )
+        self.assertEqual(judgment.input_tokens, 19)
 
     def test_openrouter_retries_529_with_exponential_backoff(self):
         calls = []

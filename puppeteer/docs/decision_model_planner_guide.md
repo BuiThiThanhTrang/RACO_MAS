@@ -1,4 +1,4 @@
-# Decision-model planner: Jev and Clef
+# Decision-model planner: OpenAI Decisions, Jev, and Clef
 
 This policy is the no-training System One alternative to the existing generative
 `FrozenLLMPlannerPolicy`. It keeps graph execution, W3D2 capacity management,
@@ -30,7 +30,7 @@ available roles plus `stop`. The decision probability distribution is written to
 the audit trace only. It is not used as an agent-profile feature, an uncertainty
 estimate, or a path-count threshold.
 
-Jev and Clef do not generate free-form assignments. `subtask` and
+OpenAI Decisions, Jev, and Clef do not generate free-form assignments. `subtask` and
 `expected_contribution` are built deterministically from the selected role's
 static routing profile.
 
@@ -53,6 +53,35 @@ Secrets are never placed in experiment YAML files or audit events.
 Both models are called through OpenRouter's typed Decisions endpoint,
 `https://openrouter.ai/api/alpha/decisions`; they are not sent to the chat
 completions endpoint.
+
+## GPT-6 Luna Decisions through OpenRouter
+
+The primary experiment configuration routes OpenAI Decisions through
+OpenRouter using model ID `openai/gpt-6-luna-decisions` and the same typed
+endpoint already used for Jev:
+
+```powershell
+$env:OPENROUTER_API_KEY = "sk-or-v1-..."
+```
+
+OpenRouter exposes this model through the project's existing System One
+contract, so no prompt emulation or chat-completion parser is involved:
+
+- task and observable state are sent in `state`;
+- yes/no probes use `noul`;
+- routing uses `choice` with one probability per candidate;
+- ordered diagnostics use `score`.
+
+Gold labels, valid actions, capability scores, and backbone identity are not
+added. Malformed answers follow the existing deterministic fallback path.
+
+OpenRouter documents a limit of 200 questions per request for this model. The
+V3 Track A router asks one routing question per call, while optional semantic
+diagnosis stays well below that limit. See the
+[OpenRouter model page](https://openrouter.ai/openai/gpt-6-luna-decisions).
+
+The native `provider: openai` adapter remains available as an optional fallback
+for direct OpenAI access, but it is not used by the comparison configs.
 
 ## Local web search through SearXNG
 

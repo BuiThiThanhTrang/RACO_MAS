@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 import time
 from typing import Any, Mapping
 
@@ -42,6 +43,13 @@ ROLE_TOOLS = {
     "Workbook Test Executor": ("run_solution_public",),
     "Workbook Integrity Validator": ("validate_public_output",),
 }
+
+
+TRANSFORMATION_SUBMISSION = (
+    "Return the complete Python statements that transform the existing workbook variable. "
+    "The harness opens the workbook and saves it after your code runs. "
+    "Leave workbook bound to the original workbook and do not define solve or return from its body."
+)
 
 
 def _json_value(value: Any) -> Any:
@@ -336,9 +344,17 @@ class SpreadsheetBenchPythonOJAdapter:
         artifacts = {key: self._artifact_view(env, state, value) for key, value in state["artifacts"].items()}
         validation = artifacts.get("public_validation")
         terminal = bool(validation and validation["fresh"] and validation.get("passed"))
-        return {
+        contract = read_json(env.workspace_dir / "public/execution_contract.json")["candidate"]
+        if self._uses_transformation_body():
+            contract["submission"] = {
+                "mode": "transformation_body_v2",
+                "actor_input": "Python/OpenPyXL statements operating on workbook",
+                "artifact": "The harness wraps the statements in solve(input_path, output_path).",
+                "milestones": "Acceptance checks syntax and policy. A fresh passing public validation marks the episode ready for STOP.",
+            }
+        observation = {
             "public_task": read_json(env.workspace_dir / "public/task.json"),
-            "candidate_contract": read_json(env.workspace_dir / "public/execution_contract.json")["candidate"],
+            "candidate_contract": contract,
             "public_case_summary": {
                 "input_hash": versions["public_input_hash"],
                 "sheets": [item["name"] for item in workbook_snapshot(self._input(env), max_rows=0)["sheets"]],
@@ -350,21 +366,83 @@ class SpreadsheetBenchPythonOJAdapter:
             "terminal": terminal,
         }
 
+        if self._uses_transformation_body() and observation["latest_execution"]:
+            observation["latest_execution"] = {
+                **observation["latest_execution"],
+                "fresh": bool(artifacts.get("public_execution", {}).get("fresh")),
+            }
+        if self._uses_transformation_body() and state["rejected_attempts"]:
+            last = state["rejected_attempts"][-1]
+            observation["latest_candidate_rejection"] = {
+                "tool": last["producer_tool"], "error": last["error"],
+            }
+        return observation
+
+    def _uses_transformation_body(self):
+        return self.runtime.get("candidate_authoring") == "transformation_body_v2"
+
+    def plain_python_submission(self, env, tools):
+        if self._uses_transformation_body():
+            source_field = "transformation_body"
+            instruction = TRANSFORMATION_SUBMISSION
+        elif self.runtime.get("candidate_authoring") == "full_source_v1":
+            source_field = "python_source"
+            instruction = (
+                "Return the complete Python source defining solve(input_path, output_path). "
+                "Load the workbook from input_path and save it to output_path. "
+                "Use the supplied paths for all workbook I/O."
+            )
+        else:
+            return None
+        if "write_solution" in tools:
+            return "write_solution", {"input_artifact_refs": []}, instruction, source_field
+        if "revise_solution" in tools:
+            state = self._state(env)
+            candidate = state["artifacts"].get("candidate_solution")
+            if not candidate:
+                return None
+            versions = self.versions(env)
+            evidence = [
+                artifact["artifact_id"]
+                for key in ("public_execution", "public_validation")
+                if (artifact := state["artifacts"].get(key))
+                and self._fresh(artifact, state, versions)
+            ]
+            return "revise_solution", {
+                "base_candidate_artifact_id": candidate["artifact_id"],
+                "evidence_refs": evidence,
+            }, instruction + " Submit the entire revised transformation.", source_field
+
     def executor_context(self, env, action, role_profile=None):
         state = self._state(env)
+        observation = self.public_observation(env)
+        contract = read_json(env.workspace_dir / "public/execution_contract.json")
+        constraints = {
+            "entrypoint": "solve(input_path, output_path)",
+            "allowed_library": "OpenPyXL load_workbook and style helpers Alignment, Border, Font, PatternFill and Side are prebound. Documented imports from openpyxl/openpyxl.styles plus collections.defaultdict and copy.copy are accepted and normalized.",
+            "forbidden": "No other imports, dunder/private attributes, arbitrary file access, network, top-level execution or class definitions.",
+            "output": "The function must save a readable XLSX workbook exactly to output_path.",
+        }
+        if self._uses_transformation_body():
+            contract["candidate"] = observation["candidate_contract"]
+            contract["trusted_evaluation_condition"] = contract.pop("terminal_condition")
+            contract["terminal_condition"] = "A fresh passing public validation makes the episode ready for the router to STOP."
+            constraints = {
+                "submission": TRANSFORMATION_SUBMISSION,
+                "task_format": "Use Python/OpenPyXL to implement the workbook changes requested by the original task, including tasks originally phrased as VBA requests.",
+                "skeleton": "def solve(input_path, output_path):\n    workbook = load_workbook(input_path)\n    # Your transformation goes here.\n    workbook.save(output_path)",
+                "allowed_library": "Prebound: openpyxl, Alignment, Border, Font, PatternFill, Side, defaultdict, copy and re. Use these names directly. Standard imports of these names are normalized. Use re.search with a pattern string for regex matching.",
+                "forbidden": "The runner restricts imports, private attributes, file and network access, and class definitions.",
+                "evidence": "Use the current public candidate and execution or validation artifact previews for repair. Read more of an artifact by ID if needed. Apply the transformation to workbook data rather than hard-coding public case values.",
+            }
         return {
             "task": read_json(env.workspace_dir / "public/task.json"),
-            "execution_contract": read_json(env.workspace_dir / "public/execution_contract.json"),
+            "execution_contract": contract,
             "validation_contract": read_json(env.workspace_dir / "public/validation_contract.json"),
             "public_case_1": workbook_snapshot(self._input(env)),
-            "runtime_state": self.public_observation(env),
+            "runtime_state": observation,
             "recent_tool_events": state["events"][-4:],
-            "candidate_authoring_constraints": {
-                "entrypoint": "solve(input_path, output_path)",
-                "allowed_library": "OpenPyXL load_workbook and style helpers Alignment, Border, Font, PatternFill and Side are prebound. Documented imports from openpyxl/openpyxl.styles plus collections.defaultdict and copy.copy are accepted and normalized.",
-                "forbidden": "No other imports, dunder/private attributes, arbitrary file access, network, top-level execution or class definitions.",
-                "output": "The function must save a readable XLSX workbook exactly to output_path.",
-            },
+            "candidate_authoring_constraints": constraints,
         }
 
     def public_preconditions(self, env, action_id, role_profile=None):
@@ -401,6 +479,16 @@ class SpreadsheetBenchPythonOJAdapter:
             "validate_public_output": ToolDefinition("validate_public_output", "Validate fresh public output against the public deterministic contract; never read private cases.", {
                 "type": "object", "properties": {"candidate_artifact_id": {"type": "string"}, "execution_artifact_id": {"type": "string"}}, "required": ["candidate_artifact_id", "execution_artifact_id"], "additionalProperties": False}),
         }
+        if self._uses_transformation_body():
+            for name in ("write_solution", "revise_solution"):
+                tool = definitions[name]
+                schema = tool.input_schema
+                schema["properties"]["transformation_body"] = schema["properties"].pop("python_source")
+                schema["required"][schema["required"].index("python_source")] = "transformation_body"
+                definitions[name] = ToolDefinition(
+                    name, TRANSFORMATION_SUBMISSION,
+                    schema,
+                )
         return tuple(definitions[name] for name in tools)
 
     def _store_bytes(self, env, state, key, raw: bytes, suffix: str, inputs, tool, refs=(), extra=None):
@@ -1155,13 +1243,41 @@ class SpreadsheetBenchPythonOJAdapter:
                 offset, limit = int(arguments.get("offset", 0)), int(arguments.get("limit", 8000))
                 output = {"artifact_id": artifact["artifact_id"], "offset": offset, "next_offset": min(offset + limit, len(text)), "total_length": len(text), "content": text[offset:offset + limit]}
             elif tool_name in {"write_solution", "revise_solution"}:
-                source = self._strip_code_fence(str(arguments["python_source"]))
+                body_mode = self._uses_transformation_body()
+                source_key = "transformation_body" if body_mode else "python_source"
+                source = str(arguments[source_key])
                 if tool_name == "revise_solution":
                     current = state["artifacts"].get("candidate_solution")
                     if not current or arguments["base_candidate_artifact_id"] != current["artifact_id"]:
                         raise ValueError("Repair must reference the current candidate artifact")
                 try:
-                    normalize_and_validate_source(source)
+                    if body_mode:
+                        fenced = re.fullmatch(r"```(?:python|py)?[ \t]*\n(.*?)```", source.strip(), re.S | re.I)
+                        body = textwrap.dedent(fenced.group(1) if fenced else source).strip()
+                        try:
+                            tree = ast.parse(body, mode="exec")
+                            compile(tree, "<transformation>", "exec")
+                        except SyntaxError as error:
+                            raise CandidatePolicyError(f"Transformation line {error.lineno}: {error.msg}") from error
+                        if not tree.body:
+                            raise CandidatePolicyError("Submit at least one Python statement")
+                        if any(isinstance(node, ast.FunctionDef) and node.name == "solve" for node in tree.body):
+                            raise CandidatePolicyError("Submit the transformation statements inside solve")
+                        wrapper = ast.parse(
+                            "def solve(input_path, output_path):\n"
+                            "    workbook = load_workbook(input_path)\n"
+                            "    workbook.save(output_path)\n"
+                        )
+                        wrapper.body[0].body[1:1] = tree.body
+                        source = ast.unparse(wrapper) + "\n"
+                    else:
+                        source = self._strip_code_fence(source)
+                    validated = normalize_and_validate_source(source)
+                    if body_mode:
+                        try:
+                            compile(validated, "<candidate>", "exec")
+                        except SyntaxError as error:
+                            raise CandidatePolicyError(f"SyntaxError: {error.msg} at candidate line {error.lineno}") from error
                 except CandidatePolicyError as error:
                     rejected = env.workspace_dir / f"_runtime/rejected/{len(state['rejected_attempts']):04}.py"
                     rejected.parent.mkdir(parents=True, exist_ok=True)
@@ -1171,7 +1287,16 @@ class SpreadsheetBenchPythonOJAdapter:
                     status, output = "invalid_output", {"error_type": type(error).__name__, "error": str(error), "rejected_attempt": item}
                 else:
                     refs = ["candidate_solution"] if tool_name == "revise_solution" else []
-                    artifact = self._store_bytes(env, state, "candidate_solution", source.encode("utf-8"), ".py", {"public_input_hash": versions["public_input_hash"], "runtime_profile": versions["runtime_profile"]}, tool_name, refs)
+                    lineage = None
+                    if body_mode and tool_name == "revise_solution":
+                        # The previous candidate is immutable lineage, not a
+                        # dependency on the current candidate slot.
+                        refs = []
+                        lineage = {
+                            "base_candidate_artifact_id": current["artifact_id"],
+                            "evidence_refs": arguments["evidence_refs"],
+                        }
+                    artifact = self._store_bytes(env, state, "candidate_solution", source.encode("utf-8"), ".py", {"public_input_hash": versions["public_input_hash"], "runtime_profile": versions["runtime_profile"]}, tool_name, refs, lineage)
                     output = {"artifact": artifact, "entrypoint": "solve(input_path, output_path)"}
             elif tool_name == "run_solution_public":
                 candidate, candidate_path = self._candidate_source(env, state)

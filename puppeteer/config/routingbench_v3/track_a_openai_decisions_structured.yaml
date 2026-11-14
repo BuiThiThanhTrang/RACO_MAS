@@ -1,0 +1,23 @@
+seed: 42
+output_dir: runs
+
+benchmark:
+  data_dir: data/RoutingBench/v3_alpha
+  split: development
+  track: a
+
+router:
+  type: decision
+  provider: openrouter
+  model: openai/gpt-6-luna-decisions
+  api_key_env: OPENROUTER_API_KEY
+  orchestration_profile: structured
+  timeout_seconds: 30
+  max_retries: 5
+  retry_backoff_seconds: 2
+  max_retry_delay_seconds: 30
+
+execution:
+  mode: live
+  actor_model: qwen-3.5-9b
+  max_output_attempts: 2

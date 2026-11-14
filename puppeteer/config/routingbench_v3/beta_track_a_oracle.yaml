@@ -1,0 +1,15 @@
+seed: 42
+output_dir: runs
+
+benchmark:
+  data_dir: data/RoutingBench/v3_beta
+  split: development
+  track: a
+
+router:
+  type: oracle
+
+execution:
+  mode: live
+  actor_model: qwen-3.5-9b
+  max_output_attempts: 2

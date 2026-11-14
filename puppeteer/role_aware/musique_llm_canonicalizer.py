@@ -11,6 +11,7 @@ from model.query_manager import query_manager
 
 PROMPT_VERSION = "musique_llm_canonicalizer_v1"
 RUNTIME_PROMPT_VERSION = "musique_runtime_extractor_v1"
+PATH_END_PROMPT_VERSION = "musique_path_end_candidate_finalizer_v1"
 
 ANSWER_EXTRACTION_SCHEMA = {
     "type": "object",
@@ -38,6 +39,17 @@ RUNTIME_EXTRACTION_SCHEMA = {
             "type": "string",
             "enum": ["FINAL", "CANDIDATE", "NO_ANSWER"],
         },
+        "answer": {"type": "string"},
+        "answer_quote": {"type": "string"},
+    },
+}
+
+PATH_END_FINALIZATION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["status", "answer", "answer_quote"],
+    "properties": {
+        "status": {"type": "string", "enum": ["FINAL", "NO_ANSWER"]},
         "answer": {"type": "string"},
         "answer_quote": {"type": "string"},
     },
@@ -75,6 +87,20 @@ plans, intermediate entities, null values, refusals, unresolved conflicts, or
 missing information. For FINAL or CANDIDATE, answer_quote must be an exact
 contiguous span from agent_output and answer must equal that quote after
 whitespace normalization. Return only the requested JSON object."""
+
+PATH_END_SYSTEM_PROMPT = """You are a conservative, gold-blind MuSiQue
+path-end candidate gate. The path has no execution budget left. You never see
+the gold answer and must not solve the question, repair an answer, or add a fact
+that is absent from the supplied agent output.
+
+Return FINAL only when one exact contiguous span in agent_output is already a
+direct answer to the original question. The output may label it as a candidate
+rather than final; your job is only to decide whether that existing span can be
+committed. Return NO_ANSWER for intermediate entities, evidence-only text,
+plans, uncertainty, refusals, conflicts, missing information, or text that does
+not address the original question. For FINAL, answer and answer_quote must be
+the same exact contiguous span from agent_output after whitespace normalization.
+Return only the requested JSON object."""
 
 
 def original_question(task_text: Any) -> str:
@@ -317,6 +343,85 @@ def extract_runtime_answer_with_llm(
     result.update(
         {
             "prompt_version": RUNTIME_PROMPT_VERSION,
+            "model": model,
+            "tokens": total_tokens,
+            "repair_attempts": repairs,
+        }
+    )
+    return result, total_tokens
+
+
+def finalize_path_end_candidate_with_llm(
+    raw_output: Any,
+    *,
+    question: Any,
+    role: Any,
+    model: str,
+    reasoning_effort: str = "low",
+    max_repair_attempts: int = 1,
+    query_func: Callable[..., tuple[dict[str, Any], int]] | None = None,
+) -> tuple[dict[str, Any], int]:
+    """Commit an existing path-final span without gold data or answer generation."""
+
+    source = str(raw_output or "").strip()
+    if not source:
+        return {
+            "status": "NO_ANSWER",
+            "answer": "",
+            "answer_quote": "",
+            "prompt_version": PATH_END_PROMPT_VERSION,
+            "model": model,
+            "tokens": 0,
+            "repair_attempts": 0,
+        }, 0
+    judge_input = {
+        "prompt_version": PATH_END_PROMPT_VERSION,
+        "original_question": original_question(question),
+        "agent_role": str(role or "unknown"),
+        "agent_output": source,
+    }
+    messages = [
+        {"role": "system", "content": PATH_END_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(judge_input, ensure_ascii=False)},
+    ]
+    query = query_func or query_manager.query_structured
+    total_tokens = 0
+    result = None
+    last_error: ValueError | None = None
+    repairs = 0
+    for attempt in range(max(0, int(max_repair_attempts)) + 1):
+        payload, tokens = query(
+            model,
+            messages,
+            PATH_END_FINALIZATION_SCHEMA,
+            schema_name="musique_path_end_candidate_finalization",
+            reasoning_effort=reasoning_effort,
+        )
+        total_tokens += int(tokens)
+        try:
+            result = validate_runtime_extraction(payload, source)
+            if result["status"] == "CANDIDATE":
+                raise ValueError("Path-end finalizer cannot return CANDIDATE")
+            break
+        except ValueError as error:
+            last_error = error
+            if attempt >= max_repair_attempts:
+                raise
+            repairs += 1
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "The decision violated the quote-only path-end contract: "
+                        f"{error}. Return FINAL or NO_ANSWER without adding text."
+                    ),
+                }
+            )
+    if result is None:
+        raise last_error or ValueError("Path-end candidate finalization failed")
+    result.update(
+        {
+            "prompt_version": PATH_END_PROMPT_VERSION,
             "model": model,
             "tokens": total_tokens,
             "repair_attempts": repairs,

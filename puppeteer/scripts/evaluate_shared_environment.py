@@ -7,9 +7,10 @@ import subprocess
 from contextlib import closing
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from routing_benchmark.v4.execution.final_evaluation import audit_domain
-from routing_benchmark.v4.execution.shared_evaluation import classify_legacy,episode_metrics
+from routing_benchmark.v4.execution.shared_evaluation import classify_legacy,episode_metrics,table_qa_metrics
 from routing_benchmark.v4.execution.shared_runner import write_jsonl
 from routing_benchmark.v4.execution.adapters.common import write_json
+from routing_benchmark.v4.execution.adapters.table_qa import ADAPTER_ID as TABLE_QA_ADAPTER_ID
 from routing_benchmark.v4.artifacts.schema import sha256_file
 
 def rows(path):
@@ -80,10 +81,13 @@ def main():
         if not (folder/'result.json').exists(): continue
         decisions=rows(folder/'decisions.jsonl')
         events=rows(folder/'trajectory.jsonl')
+        states=rows(folder/'decision_states.jsonl')
         report=json.loads((folder/'result.json').read_text(encoding='utf-8'))
         report['infrastructure_failure']=report.get('terminal_reason')=='ROUTER_SERVICE_ERROR' or infrastructure_failure(events)
         report['evaluation_eligible']=not report['infrastructure_failure']
         report['metrics']=episode_metrics(decisions,events)
+        if states and states[0]["observation"].get("current_state", {}).get("state_version")==TABLE_QA_ADAPTER_ID:
+            report['metrics']['table_qa']=table_qa_metrics(states,decisions,events)
         report['metrics']['router_input_tokens']=sum(d.get('metadata',{}).get('input_tokens',0) or 0 for d in decisions)
         report['metrics']['router_latency_ms']=sum(d.get('metadata',{}).get('latency_ms',0) or 0 for d in decisions)
         responses=[response for event in events for response in event.get('result',{}).get('responses',[])]
@@ -92,7 +96,7 @@ def main():
         report['metrics']['tool_calls']=sum(len(event.get('result',{}).get('tool_events',[])) for event in events)
         report['end_task_audit']=audit_database(folder) if config['domain']=='database_migration_integrity' else audit_domain(folder,config,Path(__file__).resolve().parents[1])
         reports.append(report)
-        for state in rows(folder/'decision_states.jsonl'):
+        for state in states:
             decision=next((d for d in decisions if d['decision_id']==state['decision_id']),None)
             exclusion='infrastructure' if report['infrastructure_failure'] else 'no_decision' if not decision else 'budget' if decision['dispatch_status']=='suppressed_by_budget' else None
             queue.append({**state,'run_id':args.run_dir.name,'evaluation_eligible':exclusion is None,'evaluation_exclusion_reason':exclusion})

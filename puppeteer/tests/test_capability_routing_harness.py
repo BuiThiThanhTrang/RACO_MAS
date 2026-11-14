@@ -106,6 +106,34 @@ class CapabilityRoutingHarnessTests(unittest.TestCase):
         self.assertTrue(harness.terminal_ready(state))
         self.assertFalse(harness.terminal_ready(state | {"paragraph_reference_count": 0}))
         self.assertFalse(harness.terminal_ready(state | {"last_action_status": "failure"}))
+        self.assertFalse(
+            harness.terminal_ready(
+                state
+                | {
+                    "current_output_status": "NEEDS_EVIDENCE",
+                    "output_status_explicit": True,
+                    "unresolved_dependency": True,
+                }
+            )
+        )
+        self.assertFalse(
+            harness.terminal_ready(
+                state
+                | {
+                    "current_output_status": "CANDIDATE",
+                    "unresolved_dependency": True,
+                }
+            )
+        )
+        self.assertTrue(
+            harness.terminal_ready(
+                state
+                | {
+                    "paragraph_reference_count": 0,
+                    "evidence_lineage_exists": True,
+                }
+            )
+        )
 
     def test_branching_is_conditional_and_root_starts_with_one_path(self):
         harness = CapabilityRoutingHarness(
@@ -132,6 +160,66 @@ class CapabilityRoutingHarnessTests(unittest.TestCase):
                 capacity=3,
                 routing_state=state,
                 semantic_diagnostics=diagnostics,
+            ),
+            2,
+        )
+
+    def test_musique_can_disable_soft_branch_diagnoses_and_stall_forks(self):
+        harness = CapabilityRoutingHarness(
+            {
+                "enabled": True,
+                "adaptive_branching": {
+                    "enabled": True,
+                    "initial_paths": 1,
+                    "allow_independent_diagnosis": False,
+                    "allow_stall_branching": False,
+                },
+            }
+        )
+        state = {
+            "profile": "musique_dynamic_v2",
+            "path_stalled": True,
+            "repeat_without_progress": True,
+            "has_conflicting_evidence": False,
+        }
+        diagnostics = {
+            "independent_branch_warranted": {"noul": 0.99},
+            "progress_since_previous_step": {"score": 0},
+        }
+        self.assertFalse(harness.should_branch(state, diagnostics, capacity=3))
+        self.assertTrue(
+            harness.should_branch(
+                state | {"has_conflicting_evidence": True},
+                diagnostics,
+                capacity=3,
+            )
+        )
+        needs_evidence = {
+            "current_output_status": "NEEDS_EVIDENCE",
+            "output_status_explicit": True,
+            "repeat_without_progress": False,
+            "path_stalled": False,
+        }
+        self.assertEqual(
+            harness.route_capacity(
+                root=False,
+                capacity=3,
+                routing_state=needs_evidence,
+                semantic_diagnostics={
+                    "progress_since_previous_step": {"score": 0}
+                },
+            ),
+            1,
+        )
+        self.assertEqual(
+            harness.route_capacity(
+                root=False,
+                capacity=3,
+                routing_state=needs_evidence
+                | {
+                    "current_output_status": "CONFLICT",
+                    "has_conflicting_evidence": True,
+                },
             ),
             2,
         )
@@ -168,6 +256,12 @@ class CapabilityRoutingHarnessTests(unittest.TestCase):
                 "paragraph_reference_count": 2,
                 "candidate_answers": ["A"],
                 "final_answers": [],
+                "current_output_status": "NEEDS_EVIDENCE",
+                "output_status_explicit": True,
+                "unresolved_dependency": True,
+                "missing_subquestion": "Which organization governs the event?",
+                "evidence_lineage_exists": True,
+                "evidence_lineage": [{"event_index": 0, "references": [1, 3]}],
             },
             previous_outputs=[{"id": 1}, {"id": 2}, {"id": 3}],
             remaining_depth=3,
@@ -178,8 +272,12 @@ class CapabilityRoutingHarnessTests(unittest.TestCase):
         self.assertEqual(
             board["execution"]["recent_outputs"], [{"id": 2}, {"id": 3}]
         )
+        self.assertEqual(board["execution"]["output_status"], "NEEDS_EVIDENCE")
+        self.assertEqual(
+            board["execution"]["missing_subquestion"],
+            "Which organization governs the event?",
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
-

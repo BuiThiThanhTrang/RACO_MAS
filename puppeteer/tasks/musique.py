@@ -62,6 +62,7 @@ def load_dataset(
     data_start=0,
     hop_count=None,
     data_root=DEFAULT_DATA_ROOT,
+    task_ids=None,
 ):
     del seed  # MuSiQue uses official immutable splits.
     if hop_count is not None and int(hop_count) not in {2, 3, 4}:
@@ -92,10 +93,76 @@ def load_dataset(
     )
     if hop_count is not None:
         data = data[data["hop_count"] == int(hop_count)]
+    if task_ids is not None:
+        ordered_ids = [str(value) for value in task_ids]
+        indexed = {
+            str(row["id"]): row
+            for _, row in data.iterrows()
+        }
+        missing_ids = [task_id for task_id in ordered_ids if task_id not in indexed]
+        if missing_ids:
+            preview = ", ".join(missing_ids[:5])
+            raise ValueError(
+                f"Retry source contains {len(missing_ids)} task IDs not present "
+                f"in MuSiQue {split}: {preview}"
+            )
+        data = pd.DataFrame([indexed[task_id] for task_id in ordered_ids])
     data = data.iloc[int(data_start):]
     if data_limit is not None:
         data = data.iloc[: int(data_limit)]
     return data.reset_index(drop=True)
+
+
+def _resolve_retry_result_path(source: str | os.PathLike[str]) -> Path:
+    candidate = Path(source)
+    if not candidate.exists():
+        candidate = Path("runs") / candidate
+    if candidate.is_file():
+        if candidate.suffix.casefold() != ".jsonl":
+            raise ValueError("--retry_failed_from must resolve to a JSONL result")
+        return candidate
+    if not candidate.is_dir():
+        raise FileNotFoundError(f"Retry source not found: {source}")
+    results_dir = candidate / "results" if (candidate / "results").is_dir() else candidate
+    matches = sorted(results_dir.glob("MuSiQue_*.jsonl"))
+    if len(matches) != 1:
+        raise ValueError(
+            f"Retry source must contain exactly one MuSiQue JSONL; found "
+            f"{len(matches)} in {results_dir}"
+        )
+    return matches[0]
+
+
+def load_failed_retry_records(source: str | os.PathLike[str]) -> list[dict[str, Any]]:
+    result_path = _resolve_retry_result_path(source)
+    failed: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    with result_path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    f"Invalid JSON at {result_path}:{line_number}"
+                ) from error
+            if record.get("correct") is not False:
+                continue
+            task_id = str(record.get("id") or record.get("task_id") or "").strip()
+            if not task_id or task_id in seen:
+                continue
+            seen.add(task_id)
+            failed.append(
+                {
+                    "id": task_id,
+                    "offset": record.get("offset"),
+                    "source_result": str(result_path.resolve()),
+                }
+            )
+    if not failed:
+        raise ValueError(f"Retry source has no records with correct=false: {result_path}")
+    return failed
 
 
 def format_question(row, idx=None):
@@ -147,16 +214,25 @@ def run(
     data_start=0,
     seed=42,
     hop_count=None,
+    retry_failed_from=None,
 ):
     effective_start, effective_limit = resolve_data_window(
         runner, data_start, data_limit
     )
+    retry_records = (
+        load_failed_retry_records(retry_failed_from)
+        if retry_failed_from is not None
+        else []
+    )
+    retry_ids = [record["id"] for record in retry_records]
+    retry_offsets = {record["id"]: record.get("offset") for record in retry_records}
     dataset = load_dataset(
         mode,
         effective_limit,
         seed=seed,
         data_start=effective_start,
         hop_count=hop_count,
+        task_ids=retry_ids if retry_records else None,
     )
     split = _official_split(mode)
     hop_suffix = "all_hops" if hop_count is None else f"{int(hop_count)}hop"
@@ -166,7 +242,13 @@ def run(
     file_mode = register_result_path(runner, result_path)
     with open(result_path, file_mode, encoding="utf-8") as destination:
         for index, (_, row) in enumerate(tqdm(dataset.iterrows(), total=len(dataset))):
-            absolute_offset = effective_start + index
+            default_offset = effective_start + index
+            source_offset = retry_offsets.get(str(row.get("id")))
+            absolute_offset = (
+                int(source_offset)
+                if source_offset is not None
+                else default_offset
+            )
             task = format_question(row, absolute_offset)
             prediction = runner.run_reasoning(task)
             metadata = dict(getattr(runner, "last_result_metadata", {}) or {})
@@ -212,6 +294,14 @@ def run(
                 "collaboration": metrics.get("collaboration", {}),
                 "router_cs": metrics.get("router_cs"),
                 "offset": absolute_offset,
+                **(
+                    {
+                        "retry_failed_only": True,
+                        "retry_source": retry_records[0]["source_result"],
+                    }
+                    if retry_records
+                    else {}
+                ),
                 **metadata,
             }
             destination.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -220,7 +310,7 @@ def run(
             complete_item(
                 runner,
                 task["id"],
-                absolute_offset + 1,
+                effective_start + index + 1,
                 result_path,
             )
     finalize_run(runner)

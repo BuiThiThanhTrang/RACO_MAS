@@ -1,0 +1,78 @@
+{
+  "template_notice": "Design worksheet only. Generate a real ArtifactManifest and hashes with the existing schema before running.",
+  "domain": "<new_domain>",
+  "adapter_id": "<new_domain.toolchain.v1>",
+  "packet_id": "<stable-source-record-id>",
+  "source": {
+    "repository_or_dataset": "<source>",
+    "revision": "<pinned commit/version>",
+    "record_id": "<upstream ID>",
+    "split": "<original split>",
+    "license": "<license>",
+    "adaptations": []
+  },
+  "task_contract": {
+    "goal": "<observable final behavior>",
+    "initial_state": "<source/data/goal/reproducer and initial evidence>",
+    "editable_scope": [],
+    "immutable_scope": [],
+    "invariants": [],
+    "candidate_acceptance": "<representation/edit validity, distinct from solved>",
+    "terminal_validation": "<fresh successful evidence required>",
+    "independent_checker": "<trusted command/implementation and PASS/FAIL/UNAVAILABLE policy>"
+  },
+  "runtime": {
+    "versions_and_revisions": {},
+    "commands": [],
+    "timeouts_and_resource_limits": {},
+    "network_policy": "<explicit>",
+    "provisioning_and_preflight": "<instructions/evidence>"
+  },
+  "visibility": {
+    "public_files": [],
+    "private_oracle_files": [],
+    "fixture_materialization_allowlist": [],
+    "router_projection": "<exact fields/content>",
+    "executor_projection_by_role": {},
+    "artifact_reader_scope": "<allowed keys/versions, path and hash checks>",
+    "raw_trace_replay_to_router": false
+  },
+  "role_contracts": [
+    {
+      "agent_id": "<stable identity>",
+      "purpose": "<one role responsibility>",
+      "typed_tools": [],
+      "preconditions": [],
+      "read_artifacts": [],
+      "write_artifacts": [],
+      "allowed_mutations": [],
+      "failure_consequences": "<observable state and event>"
+    }
+  ],
+  "artifact_contracts": [
+    {
+      "logical_key": "<candidate/evidence>",
+      "immutable_file_and_version": "<path convention>",
+      "input_versions": [],
+      "dependency_refs": [],
+      "freshness_rule": "<hash/version equality>",
+      "reader_semantics": "<latest or explicit version>",
+      "bounded_read_policy": "<limits/ref/offset/total length>",
+      "normalization_policy": "<representation only; raw retained>"
+    }
+  ],
+  "automatic_side_effects": [],
+  "router_selected_recovery_actions": [],
+  "error_classification_policy": "<precondition/output/task failure vs transport/runtime unavailable>",
+  "selection_and_difficulty_policy": "<fixed before model outcomes>",
+  "gates": {
+    "manifest_validation": "pending",
+    "runtime_preflight": "pending",
+    "positive_and_negative_checker_tests": "pending",
+    "artifact_handoff_and_freshness": "pending",
+    "visibility_isolation": "pending",
+    "role_tool_conformance": "pending",
+    "common_runner_integration": "pending",
+    "human_packet_review": "pending"
+  }
+}

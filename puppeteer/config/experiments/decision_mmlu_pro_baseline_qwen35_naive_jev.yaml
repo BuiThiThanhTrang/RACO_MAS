@@ -1,0 +1,62 @@
+mode: frozen
+seed: 42
+personas_path: personas/role_aware/puppeteer_baseline_roles_qwen35_9b_structured_pool.jsonl
+output_dir: runs
+
+dataset:
+  name: MMLU-Pro
+  mode: test
+  data_limit: null
+  data_start: 0
+  split_seed: 42
+
+# Keep the same closed-book tool policy as the structured run.
+tools:
+  allowed: []
+
+profiles:
+  mode: static_role_cards
+  update_enabled: false
+  include_uncertainty: false
+  reset_scope: run
+  initialization:
+    source: role_cards
+    path: null
+    required_for_train: false
+
+experience:
+  mode: none
+  reset_scope: run
+  retrieval_limit: 20
+
+policy:
+  type: decision_model_planner
+  policy_mode: frozen
+  routing_input:
+    # Gold labels stay hidden in both naive and structured conditions.
+    exclude_task_fields: [Answer, id]
+  # Naive ablation: no stage mask, typed blackboard, terminal gate,
+  # capability scoring, shortlist, or extra routing guidance.
+  decision:
+    provider: openrouter
+    model: typesafe/jev-1.13
+    api_key_env: OPENROUTER_API_KEY
+    timeout_seconds: 30
+    max_retries: 5
+    retry_backoff_seconds: 2
+    max_retry_delay_seconds: 30
+    max_options: 255
+    root_selection_mode: sequential
+    experience_limit: 20
+    audit_input: true
+    semantic_diagnosis:
+      enabled: false
+      include_root: false
+
+global_config:
+  graph:
+    max_width: 3
+    max_depth: 2
+  aggregation:
+    mode: majority
+    seed: 42
