@@ -1,0 +1,27 @@
+run_name: mbpp_e1_single_agent
+output_dir: runs
+prompt_version: v1
+
+dataset:
+  name: mbpp
+  version: default
+  limit: 50
+  seed: 42
+
+expert_model:
+  backend: transformers
+  checkpoint: Qwen/Qwen2.5-Coder-3B-Instruct
+  temperature: 0.0
+  top_p: 1.0
+  max_output_tokens: 1024
+  context_limit: 8192
+  device: auto
+
+budget:
+  max_model_calls: 9
+  max_total_tokens: 14000
+  max_base_executions: 5
+  max_wall_time_seconds: 600
+
+workflow:
+  method: e1
