@@ -39,8 +39,16 @@ class OpenAICompatibleClient(ModelClient):
         api_key = os.getenv(config.api_key_env or "OPENAI_API_KEY", "")
         if not api_key:
             raise ValueError(f"Missing API key in {config.api_key_env or 'OPENAI_API_KEY'}")
+        base_url = (
+            os.getenv(config.base_url_env, "")
+            if config.base_url_env
+            else config.base_url
+        )
+        if not base_url:
+            source = config.base_url_env or "expert_model.base_url"
+            raise ValueError(f"Missing API base URL in {source}")
         self.config = config
-        self.client = OpenAI(api_key=api_key, base_url=config.base_url)
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
 
     def generate(self, messages: list[dict[str, str]]) -> ModelResponse:
         started = time.perf_counter()
@@ -72,11 +80,30 @@ class TransformersClient(ModelClient):
         self.config = config
         self.torch = torch
         self.tokenizer = AutoTokenizer.from_pretrained(config.checkpoint)
-        dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        dtype_name = config.dtype.strip().lower()
+        if dtype_name == "auto":
+            dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        else:
+            dtypes = {
+                "float32": torch.float32,
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+            }
+            if dtype_name not in dtypes:
+                raise ValueError(
+                    "Unsupported dtype. Use auto, float32, float16 or bfloat16."
+                )
+            dtype = dtypes[dtype_name]
+        automatic_maps = {"auto", "balanced", "balanced_low_0", "sequential"}
+        device_map = (
+            config.device
+            if config.device in automatic_maps
+            else {"": config.device}
+        )
         self.model = AutoModelForCausalLM.from_pretrained(
             config.checkpoint,
             torch_dtype=dtype,
-            device_map=config.device,
+            device_map=device_map,
         )
 
     def generate(self, messages: list[dict[str, str]]) -> ModelResponse:

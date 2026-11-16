@@ -16,14 +16,37 @@ class ModelConfig:
     max_output_tokens: int = 1024
     context_limit: int = 8192
     device: str = "auto"
+    dtype: str = "auto"
     base_url: str | None = None
+    base_url_env: str | None = None
     api_key_env: str | None = None
 
 
 @dataclass(frozen=True)
+class DecisionModelConfig:
+    """Configuration for a registered typed-decision model.
+
+    Known model/provider pairs obtain their adapter, checkpoint, endpoint and API
+    key environment variable from the registry. Every field after provider is an
+    optional override for self-hosted or pinned deployments.
+    """
+
+    name: str
+    provider: str
+    checkpoint: str | None = None
+    revision: str | None = None
+    adapter: str | None = None
+    base_url: str | None = None
+    base_url_env: str | None = None
+    api_key_env: str | None = None
+    device: str = "auto"
+    context_limit: int = 8192
+    timeout_seconds: float = 120.0
+
+
+@dataclass(frozen=True)
 class BudgetConfig:
-    max_model_calls: int = 8
-    max_total_tokens: int = 12000
+    max_steps: int = 7
     max_base_executions: int = 5
     max_wall_time_seconds: float = 600.0
 
@@ -52,7 +75,7 @@ class RunConfig:
     expert_model: ModelConfig
     budget: BudgetConfig
     workflow: WorkflowConfig
-    router_model: ModelConfig | None = None
+    router_model: ModelConfig | DecisionModelConfig | None = None
     prompt_version: str = "v1"
 
 
@@ -70,14 +93,19 @@ def load_config(path: str | Path) -> RunConfig:
         "heuristic",
         "model",
         "laya",
+        "decision_model",
     }:
-        raise ValueError("E3 requires workflow.router=heuristic, model or laya")
-    router_model = (
-        _construct(ModelConfig, data.get("router_model"))
-        if data.get("router_model")
-        else None
-    )
-    if workflow.router in {"model", "laya"} and router_model is None:
+        raise ValueError(
+            "E3 requires workflow.router=heuristic, model, laya or decision_model"
+        )
+    router_payload = data.get("router_model")
+    if workflow.router == "decision_model" and router_payload:
+        router_model = _construct(DecisionModelConfig, router_payload)
+    else:
+        router_model = (
+            _construct(ModelConfig, router_payload) if router_payload else None
+        )
+    if workflow.router in {"model", "laya", "decision_model"} and router_model is None:
         raise ValueError(f"{workflow.router} router requires router_model configuration")
     return RunConfig(
         run_name=str(data["run_name"]),

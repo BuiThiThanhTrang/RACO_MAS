@@ -32,6 +32,7 @@ class RunLogger:
                 result.final_code.sha256 if result.final_code else None
             ),
             "usage": {
+                "steps": result.total_steps,
                 "model_calls": result.total_model_calls,
                 "input_tokens": result.total_input_tokens,
                 "output_tokens": result.total_output_tokens,

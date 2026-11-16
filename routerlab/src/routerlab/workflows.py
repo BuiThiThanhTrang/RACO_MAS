@@ -40,15 +40,6 @@ class _Session:
     steps: list[StepRecord] = field(default_factory=list)
     initial_evaluation: EvaluationSnapshot | None = None
     final_evaluation: EvaluationSnapshot | None = None
-    best_code: CodeArtifact | None = None
-    best_score: float = -1.0
-
-    def _base_score(self, feedback: BaseTestFeedback) -> float:
-        if feedback.passed:
-            return 1.0
-        if feedback.passed_tests is None or not feedback.total_tests:
-            return 0.0
-        return feedback.passed_tests / feedback.total_tests
 
     def evaluate_current(self, *, include_plus: bool) -> EvaluationSnapshot:
         if self.code is None:
@@ -58,16 +49,13 @@ class _Session:
         )
         self.budget.record_base()
         self.base_feedback = feedback
-        score = self._base_score(feedback)
-        if score > self.best_score:
-            self.best_score = score
-            self.best_code = self.code
         return snapshot
 
     def apply_executor(
         self,
         result: ExecutorResult,
     ) -> EvaluationSnapshot | None:
+        self.budget.record_step()
         self.budget.record_model(result.usage)
         before = self.code.version if self.code else 0
         changed = False
@@ -85,7 +73,10 @@ class _Session:
                 # Reviews refer to a particular code version and become stale after edits.
                 self.logic_review = ()
                 self.edge_cases = ()
-                evaluation = self.evaluate_current(include_plus=is_first_code)
+                # During the episode, only the original MBPP Base Tests are
+                # executable feedback. EvalPlus Plus Tests remain private until
+                # the single final evaluation.
+                evaluation = self.evaluate_current(include_plus=False)
                 if is_first_code:
                     self.initial_evaluation = evaluation
         elif result.executor_id == "logic_reviewer":
@@ -125,7 +116,15 @@ class _Session:
         )
         return evaluation
 
-    def record_router(self, decision: RouterDecision, *, counts_model_call: bool) -> None:
+    def record_router(
+        self,
+        decision: RouterDecision,
+        *,
+        counts_model_call: bool,
+        executable: bool,
+        budget_violation: bool = False,
+        non_execution_reason: str | None = None,
+    ) -> None:
         if counts_model_call:
             self.budget.record_model(decision.usage)
         version = self.code.version if self.code else 0
@@ -140,6 +139,10 @@ class _Session:
                 router_decision=True,
                 metadata={
                     "valid": decision.valid,
+                    "executable": executable,
+                    "budget_violation": budget_violation,
+                    "non_execution_reason": non_execution_reason,
+                    "remaining_steps_before_action": self.budget.remaining_steps,
                     "counts_model_call": counts_model_call,
                     **dict(decision.metadata),
                 },
@@ -156,6 +159,7 @@ class _Session:
                 final_code=None,
                 steps=tuple(self.steps),
                 termination_reason=termination_reason,
+                total_steps=self.budget.steps,
                 total_model_calls=self.budget.model_calls,
                 total_input_tokens=self.budget.input_tokens,
                 total_output_tokens=self.budget.output_tokens,
@@ -163,16 +167,13 @@ class _Session:
                 total_cost_usd=self.budget.cost_usd,
                 wall_time_ms=self.budget.elapsed_ms,
             )
-        # Return the best version chosen only by public Base Test performance.
-        if self.best_code is not None:
-            self.code = self.best_code
-        if (
-            self.initial_evaluation is not None
-            and self.initial_evaluation.code_version == self.code.version
-        ):
-            self.final_evaluation = self.initial_evaluation
-        else:
-            self.final_evaluation = self.evaluate_current(include_plus=True)
+        # Submit the current version. The harness does not rescue or override the
+        # router by rolling back to a public-Base-best artifact. Regressions and
+        # recoveries caused by routing are therefore observable in final quality.
+        # Plus Tests are evaluated exactly once, after routing has terminated.
+        # Do not reuse the Base-only initial snapshot even when the submitted
+        # code version has not changed.
+        self.final_evaluation = self.evaluate_current(include_plus=True)
         return EpisodeResult(
             task_id=self.task.task_id,
             method=self.method,
@@ -181,6 +182,7 @@ class _Session:
             final_code=self.code,
             steps=tuple(self.steps),
             termination_reason=termination_reason,
+            total_steps=self.budget.steps,
             total_model_calls=self.budget.model_calls,
             total_input_tokens=self.budget.input_tokens,
             total_output_tokens=self.budget.output_tokens,
@@ -229,7 +231,7 @@ class WorkflowRunner:
         return session.finalize(reason)
 
     def _bootstrap(self, session: _Session, *, single: bool) -> bool:
-        if not session.budget.can_call_model():
+        if not session.budget.can_execute_step():
             return False
         if single:
             result = self.single_agent.run(session.task, None, None)
@@ -241,7 +243,7 @@ class WorkflowRunner:
         return True
 
     def _can_edit(self, session: _Session) -> bool:
-        return session.budget.can_call_model() and session.budget.can_run_base(
+        return session.budget.can_execute_step() and session.budget.can_run_base(
             reserve_final=True
         )
 
@@ -250,7 +252,7 @@ class WorkflowRunner:
             raise RuntimeError("Budget does not permit mandatory initial generation")
         while session.base_feedback and not session.base_feedback.passed:
             if not self._can_edit(session):
-                return "budget_exhausted"
+                return "step_budget_exhausted"
             result = self.single_agent.run(
                 session.task, session.code, session.base_feedback
             )
@@ -264,12 +266,12 @@ class WorkflowRunner:
             return "base_passed"
         for _ in range(self.config.workflow.fixed_rounds):
             for action in ("logic_reviewer", "edge_case_analyst", "repair_agent"):
-                if not session.budget.can_call_model():
-                    return "budget_exhausted"
+                if not session.budget.can_execute_step():
+                    return "step_budget_exhausted"
                 if action == "repair_agent" and not session.budget.can_run_base(
                     reserve_final=True
                 ):
-                    return "budget_exhausted"
+                    return "base_test_budget_exhausted"
                 result = self.executors.run(
                     action,
                     session.task,
@@ -291,11 +293,11 @@ class WorkflowRunner:
         if self.router is None:
             raise ValueError("E3 requires a router")
         while True:
-            if not session.budget.can_call_model():
+            if not session.budget.can_route():
                 return (
-                    "budget_exhausted"
+                    "wall_time_exhausted"
                     if session.code is not None
-                    else "budget_exhausted_no_submission"
+                    else "wall_time_exhausted_no_submission"
                 )
             state = RoutingState(
                 task_id=session.task.task_id,
@@ -311,8 +313,29 @@ class WorkflowRunner:
                 action_space=ROUTER_ACTIONS,
             )
             decision = self.router.select(state)
+            budget_violation = (
+                decision.action_id != STOP_ACTION
+                and session.budget.remaining_steps == 0
+            )
+            wall_time_exhausted = (
+                decision.action_id != STOP_ACTION
+                and not session.budget.within_wall_time()
+            )
+            executable = (
+                decision.action_id == STOP_ACTION
+                or (not budget_violation and not wall_time_exhausted)
+            )
+            non_execution_reason = None
+            if budget_violation:
+                non_execution_reason = "no_remaining_steps"
+            elif wall_time_exhausted:
+                non_execution_reason = "wall_time_exhausted_after_router"
             session.record_router(
-                decision, counts_model_call=self.router_counts_model_call
+                decision,
+                counts_model_call=self.router_counts_model_call,
+                executable=executable,
+                budget_violation=budget_violation,
+                non_execution_reason=non_execution_reason,
             )
             if decision.action_id == STOP_ACTION:
                 return (
@@ -320,12 +343,10 @@ class WorkflowRunner:
                     if session.code is not None
                     else "router_stop_no_submission"
                 )
-            if not session.budget.can_call_model():
-                return (
-                    "budget_exhausted"
-                    if session.code is not None
-                    else "budget_exhausted_no_submission"
-                )
+            if budget_violation:
+                return "executor_selected_with_zero_steps"
+            if wall_time_exhausted:
+                return "wall_time_exhausted_after_router"
             result = self.executors.run(
                 decision.action_id,
                 session.task,

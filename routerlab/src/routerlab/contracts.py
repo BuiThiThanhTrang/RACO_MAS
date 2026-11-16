@@ -107,19 +107,23 @@ class EvaluationSnapshot:
 
 @dataclass(frozen=True)
 class BudgetSnapshot:
-    remaining_model_calls: int
-    remaining_tokens: int
+    remaining_steps: int
     remaining_base_executions: int
     remaining_wall_time_ms: float
+    non_stop_action_cost: int = 1
+    stop_cost: int = 0
 
     def __post_init__(self) -> None:
         for name in (
-            "remaining_model_calls",
-            "remaining_tokens",
+            "remaining_steps",
             "remaining_base_executions",
             "remaining_wall_time_ms",
+            "non_stop_action_cost",
+            "stop_cost",
         ):
             _non_negative(getattr(self, name), name)
+        if self.non_stop_action_cost != 1 or self.stop_cost != 0:
+            raise ValueError("non-STOP actions cost one step and STOP costs zero steps")
 
 
 @dataclass(frozen=True)
@@ -212,6 +216,7 @@ class EpisodeResult:
     final_code: CodeArtifact | None
     steps: tuple[StepRecord, ...]
     termination_reason: str
+    total_steps: int
     total_model_calls: int
     total_input_tokens: int
     total_output_tokens: int
@@ -220,8 +225,13 @@ class EpisodeResult:
     wall_time_ms: float
 
     @property
-    def initial_success(self) -> bool:
-        return bool(self.initial_evaluation and self.initial_evaluation.plus_passed)
+    def initial_success(self) -> bool | None:
+        if (
+            self.initial_evaluation is None
+            or self.initial_evaluation.plus_passed is None
+        ):
+            return None
+        return self.initial_evaluation.plus_passed
 
     @property
     def final_success(self) -> bool:

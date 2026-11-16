@@ -17,7 +17,12 @@ class DatasetSelection:
 
 
 class EvalPlusMBPPDataset:
-    """Loads MBPP+ but exposes only public task fields to the workflow."""
+    """Load canonical MBPP+ prompts while keeping evaluator fields private.
+
+    EvalPlus v0.2.0 already embeds one example assertion in ``prompt``. Do not
+    append ``assertion``, ``base_input`` or ``plus_input`` here: the remaining
+    Base Tests belong to execution feedback and Plus Tests to final evaluation.
+    """
 
     def __init__(self, config: DatasetConfig) -> None:
         if config.name.lower() != "mbpp":

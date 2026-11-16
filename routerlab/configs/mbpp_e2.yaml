@@ -18,10 +18,9 @@ expert_model:
   device: auto
 
 budget:
-  max_model_calls: 9
-  max_total_tokens: 14000
+  max_steps: 7
   max_base_executions: 20
-  max_wall_time_seconds: 600
+  max_wall_time_seconds: 900
 
 workflow:
   method: e2

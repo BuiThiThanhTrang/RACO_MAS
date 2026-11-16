@@ -9,11 +9,17 @@ from pathlib import Path
 
 from .config import load_config
 from .dataset import EvalPlusMBPPDataset, write_manifest
+from .decision_models import registered_decision_models
 from .evaluator import EvalPlusEvaluator
 from .executors import ExecutorPool, SingleAgent
 from .metrics import aggregate_metrics
 from .model import build_model_client
-from .routers import HeuristicRouter, LayaDecisionRouter, ModelRouter
+from .routers import (
+    DecisionModelRouter,
+    HeuristicRouter,
+    LayaDecisionRouter,
+    ModelRouter,
+)
 from .runlog import RunLogger
 from .workflows import WorkflowRunner
 
@@ -51,6 +57,9 @@ def run_command(args: argparse.Namespace) -> int:
             router = HeuristicRouter()
         elif config.workflow.router == "laya":
             router = LayaDecisionRouter(config.router_model)  # type: ignore[arg-type]
+            router_counts_model_call = True
+        elif config.workflow.router == "decision_model":
+            router = DecisionModelRouter(config.router_model)  # type: ignore[arg-type]
             router_counts_model_call = True
         else:
             router = ModelRouter(build_model_client(config.router_model))  # type: ignore[arg-type]
@@ -99,6 +108,40 @@ def manifest_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def check_models_command(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    print(
+        f"Loading expert: {config.expert_model.checkpoint} "
+        f"({config.expert_model.device}, {config.expert_model.dtype})",
+        flush=True,
+    )
+    expert = build_model_client(config.expert_model)
+    print("Expert loaded.", flush=True)
+    if config.workflow.router == "laya":
+        assert config.router_model is not None
+        print(f"Loading router: {config.router_model.checkpoint}", flush=True)
+        router = LayaDecisionRouter(config.router_model)
+        print("Router loaded.", flush=True)
+        # Keep strong references until both models have been confirmed resident.
+        _ = (expert, router)
+    elif config.workflow.router == "decision_model":
+        assert config.router_model is not None
+        print("Loading registered decision model router.", flush=True)
+        router = DecisionModelRouter(config.router_model)  # type: ignore[arg-type]
+        print("Decision model router loaded.", flush=True)
+        _ = (expert, router)
+    else:
+        print("This configuration does not use a local Laya router.", flush=True)
+    print("Model load check completed successfully.", flush=True)
+    return 0
+
+
+def decision_models_command(args: argparse.Namespace) -> int:
+    for model in registered_decision_models():
+        print(model)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="routerlab", description="Dynamic routing evaluation on MBPP+"
@@ -119,6 +162,15 @@ def build_parser() -> argparse.ArgumentParser:
     manifest.add_argument("--output", required=True)
     manifest.add_argument("--limit", type=int)
     manifest.set_defaults(handler=manifest_command)
+    check_models = subparsers.add_parser(
+        "check-models", help="load configured local models without running tasks"
+    )
+    check_models.add_argument("--config", required=True)
+    check_models.set_defaults(handler=check_models_command)
+    decision_models = subparsers.add_parser(
+        "decision-models", help="list registered decision model/provider pairs"
+    )
+    decision_models.set_defaults(handler=decision_models_command)
     return parser
 
 

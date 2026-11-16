@@ -19,11 +19,12 @@ def episode(initial: bool, final: bool) -> EpisodeResult:
     return EpisodeResult(
         task_id="Mbpp/1",
         method="e3",
-        initial_evaluation=EvaluationSnapshot("Mbpp/1", 1, initial, initial),
+        initial_evaluation=EvaluationSnapshot("Mbpp/1", 1, initial, None),
         final_evaluation=EvaluationSnapshot("Mbpp/1", 2, final, final),
         final_code=CodeArtifact("def f(): return 1", 2),
         steps=(StepRecord(0, "repair_agent", 1, 2),),
         termination_reason="base_passed",
+        total_steps=1,
         total_model_calls=2,
         total_input_tokens=10,
         total_output_tokens=5,
@@ -51,6 +52,7 @@ def no_submission_episode() -> EpisodeResult:
             ),
         ),
         termination_reason="router_stop_no_submission",
+        total_steps=0,
         total_model_calls=1,
         total_input_tokens=10,
         total_output_tokens=0,
@@ -61,16 +63,40 @@ def no_submission_episode() -> EpisodeResult:
 
 
 class MetricsAndLoggingTests(unittest.TestCase):
-    def test_recovery_metric(self):
+    def test_final_only_plus_metrics_do_not_infer_an_initial_score(self):
         metrics = aggregate_metrics([episode(False, True)])
-        self.assertEqual(metrics["quality"]["repair_recovery_rate"], 1.0)
-        self.assertEqual(metrics["quality"]["absolute_plus_improvement"], 1.0)
+        self.assertEqual(metrics["quality"]["final_plus_pass_rate"], 1.0)
+        self.assertIsNone(metrics["quality"]["initial_plus_pass_rate"])
+        self.assertIsNone(metrics["quality"]["repair_recovery_rate"])
+        self.assertIsNone(metrics["quality"]["absolute_plus_improvement"])
 
     def test_no_submission_is_a_failed_routing_outcome(self):
         metrics = aggregate_metrics([no_submission_episode()])
         self.assertEqual(metrics["quality"]["final_plus_pass_rate"], 0.0)
         self.assertEqual(metrics["routing"]["no_submission_rate"], 1.0)
         self.assertEqual(metrics["routing"]["premature_stop_rate"], 1.0)
+
+    def test_step_usage_and_budget_violations_are_aggregated(self):
+        item = episode(False, False)
+        violating_step = StepRecord(
+            1,
+            "coder",
+            2,
+            2,
+            router_decision=True,
+            metadata={"valid": True, "budget_violation": True},
+        )
+        item = EpisodeResult(
+            **{
+                **item.__dict__,
+                "steps": item.steps + (violating_step,),
+                "termination_reason": "executor_selected_with_zero_steps",
+            }
+        )
+        metrics = aggregate_metrics([item])
+        self.assertEqual(metrics["efficiency"]["mean_executor_steps"], 1)
+        self.assertEqual(metrics["routing"]["budget_violation_decisions"], 1)
+        self.assertEqual(metrics["routing"]["budget_violation_rate"], 1.0)
 
     def test_public_trace_does_not_contain_plus_results(self):
         with tempfile.TemporaryDirectory() as directory:

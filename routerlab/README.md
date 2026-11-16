@@ -11,19 +11,19 @@ backbone by default: `Qwen/Qwen2.5-Coder-3B-Instruct`.
 The dynamic workflow is router-first:
 
 ```text
-MBPP+ task
+MBPP+ canonical prompt (task description + one sample assertion)
    |
 Router sees the fixed five-action space
    |
 selected executor (or STOP)
    |
-first code -> private initial Base+Plus evaluation
+first code -> automatic Base Tests -> public feedback
    |
 public state -> Router -> {one executor, STOP}
                          |
                          +-> reviewer: update public findings
                          +-> code edit: automatic Base Tests -> new public state
-                         +-> STOP: private final evaluation
+                         +-> STOP: one private final Base+Plus evaluation
 ```
 
 The router selects only:
@@ -44,12 +44,15 @@ routers.
 | E2 | Fixed multi-agent | Coder → Logic Reviewer → Edge-case Analyst → Repair Agent |
 | E3-H | Dynamic heuristic | Same fixed action space; deterministic policy chooses executor/STOP |
 | E3-M | Dynamic generative router | An SLM chooses executor/STOP from public state |
-| E3-L | Laya decision model | `convaiinnovations/laya` answers one typed choice question |
+| E3-DM | Typed decision router | JEV, Luna, Laya or another registered model answers the same typed choice question |
 
 E3 has no mandatory Coder bootstrap and no action mask. Every routing state exposes the
 same five actions. `repair_agent` before code is a charged no-op, and `STOP` before code
-ends with no submission. The controller may force termination only when a hard model-call,
-token, Base-Test, or wall-time budget is exhausted.
+ends with no submission. Every non-STOP executor action consumes one of seven shared
+steps; `STOP` consumes no step. At zero remaining steps the full action space is still
+shown: selecting an executor is logged as a budget violation and is not executed. The
+controller also enforces Base-Test and wall-time safety limits. Token usage is measured
+but is not an episode-level stopping condition; executor output is bounded per call.
 
 ## Expert pool
 
@@ -63,38 +66,46 @@ token, Base-Test, or wall-time budget is exhausted.
 
 All experts share one model client and checkpoint. Differences therefore come from
 their role prompts and routing sequence rather than different backbone capability.
+Routers receive a separate, normalized capability card for every action. These cards
+describe inputs, effects, availability, and step cost without exposing executor output-
+format instructions. See [`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md).
 
 ## Evaluation isolation
 
 | Information | Experts/router | Evaluator/private log |
 |---|---:|---:|
-| Task prompt and entry point | Yes | Yes |
+| Canonical task prompt, including one sample assertion, and entry point | Yes | Yes |
 | Current code | Yes | Yes |
 | Sanitized Base status/counts | Yes | Yes |
 | Base inputs or expected outputs | No | Yes |
 | Plus inputs/results | No | Yes |
 | Canonical solution | No | Yes |
 
-Plus Tests run only for the initial and final code artifacts. The initial Plus result
-is never used to choose an action or select a fallback artifact. If several versions
-exist, fallback selection uses public Base performance only.
+EvalPlus already places one example assertion in every canonical MBPP+ prompt. The
+full Base suite runs automatically after each changed code artifact and exposes only
+sanitized status/count feedback. Plus Tests run exactly once, after routing has
+terminated, on the final submitted artifact. If several versions exist, the newest
+current version is submitted even when its Base score is not higher. The harness never
+rolls back to a Base-best version or rescues a poor routing decision.
 
 ## Metrics
 
 Quality metrics:
 
 - initial/final Base pass rate;
-- initial/final Plus pass rate;
-- absolute and normalized Plus improvement;
-- repair recovery rate for tasks initially failing Plus Tests.
+- final Plus pass rate.
+
+Because Plus Tests are final-only, initial Plus pass rate, Plus improvement, and
+Plus-based repair recovery are intentionally emitted as `null`; the harness does not
+infer metrics from unobserved private evaluations.
 
 Efficiency and routing metrics:
 
 - model calls, input/output tokens, Base-Test executions, wall time, and reported cost;
 - cost per solved task;
 - executor utilization;
-- router decisions, invalid-decision count/rate, no-op and no-submission rates,
-  steps to first code, and termination reasons.
+- router decisions, invalid-decision and budget-violation rates, no-op and
+  no-submission rates, steps to first code, and termination reasons.
 
 ## Output of each run
 
@@ -103,7 +114,7 @@ runs/<run_name>/<run_id>/
   config.json          resolved configuration
   manifest.json        dataset hash and ordered task IDs
   public_trace.jsonl   actions, public Base outcomes, usage, budgets
-  private_eval.jsonl   initial/final Base+Plus evaluation
+  private_eval.jsonl   initial Base-only and final Base+Plus evaluation
   solutions.jsonl      final submitted code
   metrics.json         aggregate metrics, updated after each task
   errors.json          recoverable per-task failures
@@ -124,27 +135,67 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-The first local-model run downloads the Qwen checkpoint. A CUDA-capable GPU is strongly
-recommended. EvalPlus executes generated code in isolated worker processes; run only
-code produced within the controlled experiment environment.
+The reported full v5 runs keep the router on the client machine and serve the shared
+Qwen executor through one authenticated, scale-to-zero Modal T4 endpoint. The Modal
+image pins Qwen revision `d3a7bedd480bc27342f4336c71e86858b25df935`.
+EvalPlus executes generated code in isolated worker processes; run only code produced
+within the controlled experiment environment.
 
-## Shared protocol and commands
+On Windows, RouterLab automatically uses its EvalPlus compatibility backend because
+EvalPlus 0.3.1 directly depends on Unix-only `resource` and `SIGALRM`. The benchmark
+inputs, expected outputs, and special oracles remain unchanged; worker timeouts and
+memory limits are enforced with Windows processes, timers, and `psutil`. Use this same
+backend for every compared method and record the operating system in reported results.
+When loading a local ModernBERT-based Laya checkpoint, RouterLab also scopes the
+documented Windows Transformers initialization workaround to `laya.load()`; the
+original Transformers method is restored immediately afterward.
 
-Create one 50-task manifest before comparing methods:
+## Full v5 protocol and commands
+
+The locked full manifest contains 378 tasks and dataset hash
+`92743def42b30b354a30898e4fa33fb0`. The three primary router runs use
+`prompt_version: v5-capability-cards-current-code`, the same seven-step executor
+budget, 20 Base executions, 900-second wall-time limit, Modal Qwen expert, and final
+current-code submission rule.
 
 ```powershell
-routerlab manifest --config configs\mbpp_e1.yaml --limit 50 --output manifests\mbpp_plus_pilot50_s42.json
+routerlab run --config configs\mbpp_e3_jev_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-jev-v5-s42
+routerlab run --config configs\mbpp_e3_luna_openrouter_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-luna-v5-s42
+routerlab run --config configs\mbpp_e3_laya_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-laya-typed-v5-pinned-s42
 ```
 
-Run all five methods against exactly that manifest:
+JEV and Luna use `OPENROUTER_API_KEY`; all three configs use `MODAL_PROXY_TOKEN`.
+Laya is pinned to revision `989e28febe5886389496fe13a8036c62b2a20ae0`.
+Before the Laya run, select the cache that contains that revision:
 
 ```powershell
-routerlab run --config configs\mbpp_e1.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
-routerlab run --config configs\mbpp_e2.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
-routerlab run --config configs\mbpp_e3_heuristic.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
-routerlab run --config configs\mbpp_e3_model.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
-routerlab run --config configs\mbpp_e3_laya.yaml --manifest manifests\mbpp_plus_pilot50_s42.json --run-id pilot50-s42
+$env:HF_HOME="D:\ModelCache\huggingface"
+$env:HF_HUB_CACHE="D:\ModelCache\huggingface\hub"
+$env:HF_HUB_OFFLINE="1"
+$env:HF_HUB_DISABLE_SYMLINKS_WARNING="1"
 ```
+
+To test whether CPU RAM can hold both Laya and the Qwen expert without running a
+task, close memory-heavy applications and use the BF16 local configuration:
+
+```powershell
+routerlab check-models --config configs\mbpp_e3_laya_local.yaml
+```
+
+If both models load, run one smoke task before attempting a larger manifest:
+
+```powershell
+routerlab run --config configs\mbpp_e3_laya_local.yaml --limit 1 --run-id local-smoke1 --fast-check --fail-fast
+```
+
+For machines that cannot hold both models, the low-cost Modal deployment keeps
+the selected router local or remote and serves the same Qwen checkpoint on one
+scale-to-zero T4. See
+[`docs/MODAL_QWEN.md`](docs/MODAL_QWEN.md).
+
+Typed routers now share one `decision_model` interface and registry. Laya, JEV,
+OpenAI Decisions and DREX use the same state and action contract; only their wire
+adapters differ. See [`docs/DECISION_MODELS.md`](docs/DECISION_MODELS.md).
 
 For a quick environment check, create a 5-task manifest or override the limit:
 
@@ -162,7 +213,8 @@ For every reported table, keep constant:
 
 - task manifest and EvalPlus dataset hash;
 - expert checkpoint, decoding settings, role prompts, and runtime environment;
-- total model-call, token, Base-Test, and wall-time budgets;
+- seven executor steps, Base-Test and wall-time budgets, plus the same per-call
+  executor output-token limit; router overhead is measured separately;
 - initial generation and final submission rules;
 - random seed and hardware class.
 
@@ -179,6 +231,9 @@ python -m compileall -q src tests
 
 Implementation phases and acceptance criteria are in
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
+The full normative harness, information-flow, router-input, executor-input, evaluation,
+logging, and submission contract is in
+[`docs/SYSTEM_ARCHITECTURE.md`](docs/SYSTEM_ARCHITECTURE.md).
 
 ## Upstream components
 

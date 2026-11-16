@@ -1,6 +1,6 @@
 run_name: mbpp_e3_heuristic_router
 output_dir: runs
-prompt_version: v2-router-first
+prompt_version: v5-capability-cards-current-code
 
 dataset:
   name: mbpp
@@ -18,10 +18,9 @@ expert_model:
   device: auto
 
 budget:
-  max_model_calls: 9
-  max_total_tokens: 14000
+  max_steps: 7
   max_base_executions: 20
-  max_wall_time_seconds: 600
+  max_wall_time_seconds: 900
 
 workflow:
   method: e3

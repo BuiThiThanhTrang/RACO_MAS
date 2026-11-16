@@ -1,6 +1,6 @@
 run_name: mbpp_e3_laya_router
 output_dir: runs
-prompt_version: v2-router-first
+prompt_version: v5-capability-cards-current-code
 
 dataset:
   name: mbpp
@@ -9,26 +9,28 @@ dataset:
   seed: 42
 
 expert_model:
-  backend: transformers
+  backend: openai_compatible
   checkpoint: Qwen/Qwen2.5-Coder-3B-Instruct
+  base_url: https://router.huggingface.co/v1
+  api_key_env: HF_TOKEN
   temperature: 0.0
   top_p: 1.0
   max_output_tokens: 1024
   context_limit: 8192
-  device: auto
 
 router_model:
-  backend: laya
-  checkpoint: convaiinnovations/laya
-  context_limit: 512
+  name: laya
+  provider: local
+  checkpoint: convaiinnovations/laya-typed-decisions
+  revision: 989e28febe5886389496fe13a8036c62b2a20ae0
+  context_limit: 1024
   device: auto
 
 budget:
-  max_model_calls: 9
-  max_total_tokens: 14000
+  max_steps: 7
   max_base_executions: 20
-  max_wall_time_seconds: 600
+  max_wall_time_seconds: 900
 
 workflow:
   method: e3
-  router: laya
+  router: decision_model

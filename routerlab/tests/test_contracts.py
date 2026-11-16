@@ -31,11 +31,14 @@ class ContractTests(unittest.TestCase):
             logic_review=(),
             edge_cases=(),
             action_history=(),
-            budget=BudgetSnapshot(2, 100, 2, 1000),
+            budget=BudgetSnapshot(2, 2, 1000),
         )
         payload = state.to_router_payload()
         self.assertFalse(any("plus" in key.lower() for key in payload))
         self.assertEqual(tuple(payload["action_space"]), ROUTER_ACTIONS)
+        self.assertEqual(payload["budget"]["remaining_steps"], 2)
+        self.assertEqual(payload["budget"]["non_stop_action_cost"], 1)
+        self.assertEqual(payload["budget"]["stop_cost"], 0)
 
 
 if __name__ == "__main__":

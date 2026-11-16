@@ -21,14 +21,8 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
         bool(item.final_evaluation and item.final_evaluation.base_passed)
         for item in episodes
     ]
-    initial_plus = [item.initial_success for item in episodes]
     final_plus = [item.final_success for item in episodes]
-    initial_plus_rate = _rate(initial_plus)
     final_plus_rate = _rate(final_plus)
-    failed_initial = sum(not value for value in initial_plus)
-    recovered = sum(
-        (not before) and after for before, after in zip(initial_plus, final_plus)
-    )
     actions = Counter(
         step.action_id
         for item in episodes
@@ -42,6 +36,9 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
         step for item in episodes for step in item.steps if not step.router_decision
     ]
     invalid_router = sum(not bool(step.metadata.get("valid", True)) for step in router_steps)
+    budget_violations = sum(
+        bool(step.metadata.get("budget_violation", False)) for step in router_steps
+    )
     no_op_actions = sum(bool(step.metadata.get("no_op", False)) for step in executor_steps)
     no_submissions = sum(not item.has_submission for item in episodes)
     premature_stops = sum(
@@ -71,23 +68,24 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
         )
     solved = sum(final_plus)
     total_cost = sum(item.total_cost_usd for item in episodes)
-    denominator = 1.0 - initial_plus_rate
     return {
         "task_count": len(episodes),
         "quality": {
             "initial_base_pass_rate": _rate(initial_base),
             "final_base_pass_rate": _rate(final_base),
-            "initial_plus_pass_rate": initial_plus_rate,
+            # Plus Tests are intentionally evaluated only for the final
+            # submission. Keep the legacy keys as null rather than fabricating
+            # an initial failure rate from unobserved data.
+            "initial_plus_pass_rate": None,
             "final_plus_pass_rate": final_plus_rate,
-            "absolute_plus_improvement": final_plus_rate - initial_plus_rate,
-            "normalized_plus_improvement": (
-                (final_plus_rate - initial_plus_rate) / denominator
-                if denominator > 0
-                else 0.0
-            ),
-            "repair_recovery_rate": recovered / failed_initial if failed_initial else 0.0,
+            "absolute_plus_improvement": None,
+            "normalized_plus_improvement": None,
+            "repair_recovery_rate": None,
         },
         "efficiency": {
+            "mean_executor_steps": mean([x.total_steps for x in episodes])
+            if episodes
+            else 0.0,
             "mean_model_calls": mean([x.total_model_calls for x in episodes])
             if episodes
             else 0.0,
@@ -112,6 +110,10 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
             "router_decisions": len(router_steps),
             "invalid_router_decisions": invalid_router,
             "invalid_router_rate": invalid_router / len(router_steps)
+            if router_steps
+            else 0.0,
+            "budget_violation_decisions": budget_violations,
+            "budget_violation_rate": budget_violations / len(router_steps)
             if router_steps
             else 0.0,
             "no_op_actions": no_op_actions,

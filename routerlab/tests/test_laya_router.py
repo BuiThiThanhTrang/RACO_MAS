@@ -36,8 +36,8 @@ class LayaRouterTests(unittest.TestCase):
         agent = FakeLayaAgent()
         config = ModelConfig(
             backend="laya",
-            checkpoint="convaiinnovations/laya",
-            context_limit=512,
+            checkpoint="convaiinnovations/laya-typed-decisions",
+            context_limit=1024,
         )
         router = LayaDecisionRouter(config, agent=agent)
         state = RoutingState(
@@ -50,7 +50,7 @@ class LayaRouterTests(unittest.TestCase):
             logic_review=(),
             edge_cases=(),
             action_history=(),
-            budget=BudgetSnapshot(9, 14000, 20, 600000),
+            budget=BudgetSnapshot(9, 20, 600000),
         )
         decision = router.select(state)
         self.assertEqual(decision.action_id, "edge_case_analyst")
@@ -58,7 +58,7 @@ class LayaRouterTests(unittest.TestCase):
         self.assertEqual(decision.usage.input_tokens, 123)
         self.assertEqual(decision.metadata["confidence"], 0.73)
         self.assertEqual(tuple(agent.calls[0][0]["action_space"]), ROUTER_ACTIONS)
-        self.assertEqual(agent.calls[0][2]["max_len"], 512)
+        self.assertEqual(agent.calls[0][2]["max_len"], 1024)
 
 
 if __name__ == "__main__":

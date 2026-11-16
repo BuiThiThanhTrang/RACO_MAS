@@ -12,6 +12,7 @@ dependencies = [
   "evalplus==0.3.1",
   "laya==0.4.31",
   "openai>=1.50.0",
+  "psutil>=5.9.0",
   "PyYAML>=6.0.1",
   "torch>=2.1.0",
   "transformers>=4.47.0",
@@ -19,6 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0"]
+modal = ["modal>=1.0.0,<2.0.0"]
+decision-local = ["transformers>=5.22.2"]
 
 [project.scripts]
 routerlab = "routerlab.cli:main"

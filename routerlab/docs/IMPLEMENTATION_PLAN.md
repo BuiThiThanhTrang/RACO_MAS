@@ -14,9 +14,10 @@ Fixed router action space at every step:
 - `repair_agent`
 - `STOP`
 
-`RUN_BASE_TESTS` is deliberately not an action. The controller runs Base Tests after
-every real code change. Plus Tests are private evaluation data and run only on the
-initial and final artifacts.
+`RUN_BASE_TESTS` is deliberately not an action. The canonical EvalPlus prompt exposes
+one sample assertion. The controller runs the full Base suite after every real code
+change and exposes only sanitized feedback. Plus Tests are private evaluation data
+and run exactly once on the final submitted artifact.
 
 ## 2. Implementation phases
 
@@ -35,10 +36,11 @@ initial and final artifacts.
 
 3. **Evaluation boundary**
    - Load MBPP+ through EvalPlus and record its dataset hash.
-   - Expose only prompt and entry point to agents.
+   - Expose only the canonical prompt (description plus one sample assertion) and
+     entry point to agents.
    - Keep canonical solutions, inputs, expected outputs, and Plus results inside the
      evaluator.
-   - Log public routing traces separately from private initial/final evaluation.
+   - Log public routing traces separately from private final Plus evaluation.
 
 4. **Comparable workflows**
    - E1: single agent with Base-Test-driven self-repair.
@@ -46,35 +48,42 @@ initial and final artifacts.
    - E3: router-first execution with the full fixed action space at every step.
    - Do not mask Repair or STOP before code: they become a charged no-op and a failed
      no-submission respectively.
-   - Implement heuristic, generative-model, and Laya decision-model routers through
-     the same routing interface.
+   - Implement heuristic, generative-model, and typed decision-model routers through
+     the same routing interface. The registered comparison set includes JEV, Luna and
+     pinned local Laya; DREX adapters remain available for later experiments.
 
 5. **Budget and controller policy**
-   - Apply the same model-call, token, Base-Test, and wall-time limits.
+   - Apply the same seven-step executor budget, Base-Test, wall-time, and
+     per-executor-call output limits. Router calls are measured separately.
+   - Charge one step for every non-STOP executor action and zero steps for STOP.
+   - Keep the full action space at zero remaining steps; log an unexecutable executor
+     choice as a budget violation and terminate without running it.
    - Reserve evaluation capacity for the final artifact when one exists.
    - Let E3 stop through router `STOP`; allow controller-forced termination only when
      a hard budget prevents another valid decision or execution.
-   - Select fallback code using Base Tests only, never Plus Tests.
+   - Submit exactly the current code at termination. Do not use Base Tests to roll
+     back to an older version or let the harness rescue a routing regression.
 
 6. **Metrics and reproducibility**
-   - Record initial/final Base and Plus pass rates, absolute and normalized Plus
-     improvement, repair recovery, calls, tokens, Base executions, latency, cost,
-     executor utilization, invalid router rate, no-op/no-submission rates, steps to
-     first code, and termination reasons.
+   - Record initial/final Base pass rates, final Plus pass rate, calls, tokens, Base
+     executions, latency, cost, executor utilization, invalid router rate,
+     no-op/no-submission rates, steps to first code, and termination reasons.
    - Generate one task manifest and reuse it for every method.
    - Save config, manifest, traces, final solutions, errors, and incremental metrics.
 
 7. **Verification and pilot**
    - Unit-test action contracts, automatic Base Tests, router `STOP`, Plus-data
      isolation, logging, and metrics.
-   - Run 5 tasks for environment validation, then 50 tasks for the first pilot.
-   - Inspect failures before scaling to the full selected manifest.
+   - Run smoke tasks for environment validation, then the shared 30-task pilot.
+   - Inspect failures before scaling JEV, Luna and pinned Laya to the locked 378-task
+     `manifests/mbpp_plus_full.json` manifest under protocol v5.
 
 ## 3. Acceptance criteria
 
 - `routerlab` contains no import or runtime dependency on the previous framework.
 - A router cannot request tests or access Plus-Test information.
 - Every changed code hash is Base-tested automatically.
-- E1, E2, E3-heuristic, E3-generative, and E3-Laya run from separate versioned YAML configs.
+- E1, E2, E3-heuristic, E3-generative, and the JEV/Luna/Laya E3 decision routers run
+  from separate versioned YAML configs.
 - All methods can use the same manifest and expert checkpoint.
 - Unit tests pass before any benchmark run.

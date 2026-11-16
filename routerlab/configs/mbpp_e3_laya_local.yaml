@@ -1,0 +1,36 @@
+run_name: mbpp_e3_laya_local
+output_dir: runs
+prompt_version: v5-capability-cards-current-code
+
+dataset:
+  name: mbpp
+  version: default
+  limit: 1
+  seed: 42
+
+expert_model:
+  backend: transformers
+  checkpoint: Qwen/Qwen2.5-Coder-3B-Instruct
+  temperature: 0.0
+  top_p: 1.0
+  max_output_tokens: 1024
+  context_limit: 8192
+  device: cpu
+  dtype: bfloat16
+
+router_model:
+  name: laya
+  provider: local
+  checkpoint: convaiinnovations/laya-typed-decisions
+  revision: 989e28febe5886389496fe13a8036c62b2a20ae0
+  context_limit: 1024
+  device: cpu
+
+budget:
+  max_steps: 7
+  max_base_executions: 20
+  max_wall_time_seconds: 900
+
+workflow:
+  method: e3
+  router: decision_model

@@ -50,7 +50,9 @@ class FakeEvaluator(CodeEvaluator):
         )
 
 
-def make_config(method: str, router: str | None = None) -> RunConfig:
+def make_config(
+    method: str, router: str | None = None, *, max_steps: int = 10
+) -> RunConfig:
     model = ModelConfig(backend="replay", checkpoint="fake")
     return RunConfig(
         run_name="test",
@@ -58,8 +60,7 @@ def make_config(method: str, router: str | None = None) -> RunConfig:
         dataset=DatasetConfig(limit=1),
         expert_model=model,
         budget=BudgetConfig(
-            max_model_calls=10,
-            max_total_tokens=100,
+            max_steps=max_steps,
             max_base_executions=6,
             max_wall_time_seconds=10,
         ),
@@ -97,7 +98,7 @@ class WorkflowTests(unittest.TestCase):
         result = runner.run(self.task)
         self.assertTrue(result.final_success)
         self.assertEqual(result.termination_reason, "base_passed")
-        self.assertEqual(evaluator.calls, [(1, True), (2, False), (2, True)])
+        self.assertEqual(evaluator.calls, [(1, False), (2, False), (2, True)])
         self.assertEqual(result.total_base_executions, 3)
 
     def test_unchanged_code_does_not_reexecute_base_tests(self):
@@ -117,7 +118,7 @@ class WorkflowTests(unittest.TestCase):
         )
         result = runner.run(self.task)
         self.assertTrue(result.final_success)
-        self.assertEqual(evaluator.calls, [(1, True), (2, False), (2, True)])
+        self.assertEqual(evaluator.calls, [(1, False), (2, False), (2, True)])
 
     def test_e2_runs_the_fixed_expert_sequence(self):
         client = ReplayModelClient(
@@ -211,7 +212,33 @@ class WorkflowTests(unittest.TestCase):
         )
         self.assertIsNone(router.states[0].current_code)
         self.assertEqual(router.states[0].code_version, 0)
-        self.assertEqual(evaluator.calls, [(1, True)])
+        self.assertEqual(evaluator.calls, [(1, False), (1, True)])
+        self.assertTrue(result.final_success)
+
+    def test_e3_can_review_after_base_tests_pass(self):
+        client = ReplayModelClient(
+            [
+                "def f():\n    return 1",
+                '{"findings": ["check behavior beyond the examples"]}',
+            ]
+        )
+        router = QueueRouter(["coder", "logic_reviewer", "STOP"])
+        evaluator = FakeEvaluator()
+        runner = WorkflowRunner(
+            make_config("e3", "heuristic"),
+            evaluator,
+            ExecutorPool(client),
+            SingleAgent(client),
+            router,
+        )
+
+        result = runner.run(self.task)
+
+        self.assertEqual(
+            [step.action_id for step in result.steps if not step.router_decision],
+            ["coder", "logic_reviewer"],
+        )
+        self.assertEqual(result.termination_reason, "router_stop")
         self.assertTrue(result.final_success)
 
     def test_repair_without_code_is_counted_as_no_op(self):
@@ -231,8 +258,75 @@ class WorkflowTests(unittest.TestCase):
         executor_steps = [step for step in result.steps if not step.router_decision]
         self.assertTrue(executor_steps[0].metadata["no_op"])
         self.assertEqual(executor_steps[0].code_version_after, 0)
-        self.assertEqual(evaluator.calls, [(1, True)])
+        self.assertEqual(evaluator.calls, [(1, False), (1, True)])
         self.assertTrue(result.final_success)
+
+    def test_executor_selected_with_zero_steps_is_a_budget_violation(self):
+        client = ReplayModelClient(["def f():\n    return 1"])
+        router = QueueRouter(["coder", "edge_case_analyst"])
+        evaluator = FakeEvaluator()
+        runner = WorkflowRunner(
+            make_config("e3", "heuristic", max_steps=1),
+            evaluator,
+            ExecutorPool(client),
+            SingleAgent(client),
+            router,
+        )
+
+        result = runner.run(self.task)
+
+        self.assertEqual(result.total_steps, 1)
+        self.assertEqual(result.termination_reason, "executor_selected_with_zero_steps")
+        self.assertEqual(router.states[-1].budget.remaining_steps, 0)
+        executor_steps = [step for step in result.steps if not step.router_decision]
+        self.assertEqual([step.action_id for step in executor_steps], ["coder"])
+        final_router_step = result.steps[-1]
+        self.assertTrue(final_router_step.metadata["budget_violation"])
+        self.assertFalse(final_router_step.metadata["executable"])
+        self.assertEqual(
+            final_router_step.metadata["non_execution_reason"], "no_remaining_steps"
+        )
+
+    def test_stop_at_zero_steps_is_free_and_valid(self):
+        client = ReplayModelClient(["def f():\n    return 1"])
+        router = QueueRouter(["coder", "STOP"])
+        evaluator = FakeEvaluator()
+        runner = WorkflowRunner(
+            make_config("e3", "heuristic", max_steps=1),
+            evaluator,
+            ExecutorPool(client),
+            SingleAgent(client),
+            router,
+        )
+
+        result = runner.run(self.task)
+
+        self.assertEqual(result.total_steps, 1)
+        self.assertEqual(result.termination_reason, "router_stop")
+        self.assertEqual(router.states[-1].budget.remaining_steps, 0)
+        self.assertFalse(result.steps[-1].metadata["budget_violation"])
+        self.assertTrue(result.steps[-1].metadata["executable"])
+
+    def test_latest_code_is_submitted_even_when_base_score_regresses(self):
+        client = ReplayModelClient(
+            ["def f():\n    return 1", "def f():\n    return 0"]
+        )
+        router = QueueRouter(["coder", "coder", "STOP"])
+        evaluator = FakeEvaluator()
+        runner = WorkflowRunner(
+            make_config("e3", "heuristic", max_steps=2),
+            evaluator,
+            ExecutorPool(client),
+            SingleAgent(client),
+            router,
+        )
+
+        result = runner.run(self.task)
+
+        self.assertEqual(result.final_code.version, 2)
+        self.assertIn("return 0", result.final_code.source)
+        self.assertFalse(result.final_success)
+        self.assertEqual(evaluator.calls, [(1, False), (2, False), (2, True)])
 
 
 if __name__ == "__main__":

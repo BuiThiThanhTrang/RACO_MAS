@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -30,24 +31,33 @@ class EvalPlusEvaluator(CodeEvaluator):
         fast_check: bool = False,
     ) -> None:
         from evalplus.eval._special_oracle import MBPP_OUTPUT_NOT_NONE_TASKS
-        from evalplus.evaluate import get_groundtruth
+        import evalplus.evaluate as evalplus_evaluate
+
+        if os.name == "nt":
+            from .windows_evalplus import windows_untrusted_check
+
+            # check_correctness resolves this module global on every call.
+            evalplus_evaluate.untrusted_check = windows_untrusted_check
+            self.backend = "windows-process"
+        else:
+            self.backend = "evalplus-native"
 
         self.problems = problems
-        self.expected = get_groundtruth(
+        self.expected = evalplus_evaluate.get_groundtruth(
             problems, dataset_hash, MBPP_OUTPUT_NOT_NONE_TASKS
         )
+        self._check_correctness = evalplus_evaluate.check_correctness
         self.fast_check = fast_check
 
     def evaluate(
         self, task: TaskSpec, code: CodeArtifact, *, include_plus: bool
     ) -> tuple[BaseTestFeedback, EvaluationSnapshot]:
         from evalplus.eval import PASS
-        from evalplus.evaluate import check_correctness
 
         problem = self.problems[task.task_id]
         # EvalPlus defines generated code as a completion appended to its prompt.
         solution = str(problem["prompt"]) + "\n" + code.source
-        result = check_correctness(
+        result = self._check_correctness(
             dataset="mbpp",
             completion_id=0,
             problem=problem,
