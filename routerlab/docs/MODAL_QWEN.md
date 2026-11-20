@@ -37,9 +37,9 @@ modal deploy deploy\modal_qwen25_coder.py
 modal workspace proxy-tokens create --name routerlab-qwen
 ```
 
-The deployed endpoint URL is stored in `configs/mbpp_e3_jev_modal.yaml`,
-`configs/mbpp_e3_luna_openrouter_modal.yaml`, and
-`configs/mbpp_e3_laya_modal.yaml`. Save the token ID/secret printed by Modal; the
+The deployed endpoint URL is stored in the `*_modal.yaml` experiment configs,
+including E1 single-agent, E2 fixed workflow, JEV, Luna and Laya. Save the token
+ID/secret printed by Modal; the
 secret is shown only once. Configure the current PowerShell session:
 
 ```powershell
@@ -50,6 +50,8 @@ $env:MODAL_PROXY_TOKEN="wk-YOUR-ID.ws-YOUR-SECRET"
 
 ```powershell
 routerlab run --config configs\mbpp_e3_laya_modal.yaml --limit 1 --run-id modal-smoke1 --fast-check --fail-fast
+routerlab run --config configs\mbpp_e1_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-single-v5-s42
+routerlab run --config configs\mbpp_e2_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-fixed-v5-s42
 routerlab run --config configs\mbpp_e3_jev_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-jev-v5-s42
 routerlab run --config configs\mbpp_e3_luna_openrouter_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-luna-v5-s42
 routerlab run --config configs\mbpp_e3_laya_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-laya-typed-v5-pinned-s42

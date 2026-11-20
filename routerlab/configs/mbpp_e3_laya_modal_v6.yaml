@@ -1,0 +1,43 @@
+run_name: mbpp_e3_laya_modal_v6
+output_dir: runs
+prompt_version: v6-artifact-state-sanitized-feedback
+
+dataset:
+  name: mbpp
+  version: default
+  limit: 1
+  seed: 42
+
+expert_model:
+  backend: openai_compatible
+  checkpoint: Qwen/Qwen2.5-Coder-3B-Instruct
+  base_url: https://bt299784--routerlab-qwen25-coder-3b-serve.us-east.modal.run/v1
+  api_key_env: MODAL_PROXY_TOKEN
+  temperature: 0.0
+  top_p: 1.0
+  max_output_tokens: 1024
+  context_limit: 8192
+
+router_model:
+  name: laya
+  provider: local
+  checkpoint: convaiinnovations/laya-typed-decisions
+  revision: 989e28febe5886389496fe13a8036c62b2a20ae0
+  context_limit: 1024
+  device: cpu
+
+protocol:
+  version: v6
+  feedback_policy: sanitized_diagnostic_v2
+  framing_reserve_tokens: 256
+  router_code_preview_chars: 4000
+  recent_event_limit: 8
+
+budget:
+  max_steps: 7
+  max_base_executions: 20
+  max_wall_time_seconds: 900
+
+workflow:
+  method: e3
+  router: decision_model

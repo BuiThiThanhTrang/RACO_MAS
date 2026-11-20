@@ -1,0 +1,28 @@
+run_name: mbpp_e2_fixed_multi_agent_modal
+output_dir: runs
+prompt_version: v5-capability-cards-current-code
+
+dataset:
+  name: mbpp
+  version: default
+  limit: 1
+  seed: 42
+
+expert_model:
+  backend: openai_compatible
+  checkpoint: Qwen/Qwen2.5-Coder-3B-Instruct
+  base_url: https://bt299784--routerlab-qwen25-coder-3b-serve.us-east.modal.run/v1
+  api_key_env: MODAL_PROXY_TOKEN
+  temperature: 0.0
+  top_p: 1.0
+  max_output_tokens: 1024
+  context_limit: 8192
+
+budget:
+  max_steps: 7
+  max_base_executions: 20
+  max_wall_time_seconds: 900
+
+workflow:
+  method: e2
+  fixed_rounds: 2

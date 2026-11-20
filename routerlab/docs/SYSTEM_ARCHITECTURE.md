@@ -23,7 +23,7 @@ Action space cố định gồm:
 coder | logic_reviewer | edge_case_analyst | repair_agent | STOP
 ```
 
-### 1.1 Protocol đang dùng cho full MBPP+
+### 1.1 Protocol của các full run v5 đã khóa
 
 Ba full run chính sử dụng protocol:
 
@@ -94,6 +94,20 @@ JEV và Luna trong config dùng model alias của OpenRouter. `public_trace.json
 `typesafe/jev-1.13-20260917` và `openai/gpt-6-luna-decisions-20261006`, nhưng full run
 phải được kiểm tra lại từ trace thay vì mặc định chúng không đổi.
 
+### 1.3 Protocol v6 end-to-end hiện hành
+
+V6 được triển khai song song và không diễn giải lại log v5. Router vẫn chỉ chọn bốn
+executor hoặc `STOP`, nhưng public state dùng candidate identity, artifact history và
+freshness, role progress, recent events và typed failure/no-progress outcomes. Executor
+nhận bounded context có request audit; Plus Tests vẫn chỉ chạy ở final evaluation.
+
+V6 hiện chỉ hỗ trợ end-to-end routing. Controlled recovery và frozen candidate bank
+được hoãn. Chi tiết normative nằm trong
+`MBPP_STATE_PROTOCOL_V6_VI.md` và `MBPP_HARNESS_INFORMATION_FLOW_V6_VI.md`.
+
+Các mục còn lại của tài liệu này mô tả contract chung và chi tiết tái lập v5. Khi
+field/state behavior khác nhau, hai tài liệu v6 nói trên là nguồn chuẩn cho run v6.
+
 ## 2. Cấu trúc repository
 
 | Đường dẫn | Trách nhiệm |
@@ -114,6 +128,7 @@ phải được kiểm tra lại từ trace thay vì mặc định chúng không
 | `src/routerlab/windows_evalplus.py` | Worker EvalPlus tương thích Windows, timeout và giới hạn bộ nhớ |
 | `src/routerlab/metrics.py` | Tổng hợp metric chất lượng, hiệu quả và routing |
 | `src/routerlab/runlog.py` | Public trace, private evaluation và solution log |
+| `src/routerlab/protocol_v6.py` | Artifact ledger, freshness, v6 router state và context packer |
 | `deploy/` | Cấu hình triển khai dịch vụ inference từ xa |
 | `configs/` | Cấu hình có thể tái lập cho từng method/model/provider |
 | `manifests/` | Danh sách task có thứ tự cố định dùng chung giữa các phương pháp |
@@ -610,7 +625,28 @@ routerlab run `
   --run-id full-laya-typed-v5-pinned-s42
 ```
 
-Nên chạy ba thí nghiệm tuần tự. Không dùng `--fast-check` cho kết quả full. Không đổi
+### 14.5 Single-agent baseline qua Modal
+
+```powershell
+routerlab run `
+  --config configs\mbpp_e1_modal.yaml `
+  --manifest manifests\mbpp_plus_full.json `
+  --run-id full-single-v5-s42
+```
+
+### 14.6 Fixed multi-agent baseline qua Modal
+
+`fixed_rounds: 2` tạo tối đa bảy executor step: một lần Coder ban đầu và hai
+round `Logic Reviewer -> Edge-case Analyst -> Repair Agent`.
+
+```powershell
+routerlab run `
+  --config configs\mbpp_e2_modal.yaml `
+  --manifest manifests\mbpp_plus_full.json `
+  --run-id full-fixed-v5-s42
+```
+
+Nên chạy năm thí nghiệm tuần tự. Không dùng `--fast-check` cho kết quả full. Không đổi
 capability card, prompt, budget, endpoint hoặc submission rule giữa các run.
 
 Các lệnh hỗ trợ:
@@ -625,6 +661,14 @@ endpoint, decoding, executor prompt, capability card, budget, evaluator mode, h�
 hành, seed và final-submission rule. Với OpenRouter, cần kiểm tra `resolved_model` trong
 trace sau khi full run hoàn tất.
 
+### 14.7 Rerun v6 theo hai cohort
+
+Full manifest được phân hoạch thành cohort A gồm 124 task mà JEV và Luna cùng fail
+final Plus ở v5, và cohort B gồm 254 task còn lại. Hai manifest rời nhau và hợp lại
+đúng 378 task. Đây là phân tích hậu nghiệm; không được báo cáo riêng cohort A như một
+test split độc lập. Danh sách run, lệnh chạy, quy tắc ghép kết quả và `--resume` nằm tại
+`docs/PROTOCOL_V6_RUNS_VI.md`.
+
 ## 15. Kiểm tra trong quá trình phát triển
 
 ```powershell
@@ -638,7 +682,7 @@ Các regression test quan trọng xác minh rằng:
 - router không thể nhận Plus information qua public state hoặc public trace;
 - toàn bộ action set luôn khả dụng;
 - review có thể diễn ra trước khi có code hoặc sau Base pass;
-- Repair khi chưa có code là charged no-op;
+- Repair khi chưa có code là charged no-op ở v5 và `action_rejected` ở v6;
 - chọn executor khi không còn step là budget violation;
 - `STOP` vẫn miễn phí khi không còn step;
 - latest code được nộp kể cả khi Base score bị giảm;
@@ -646,9 +690,9 @@ Các regression test quan trọng xác minh rằng:
 
 ## 16. Các giới hạn cần lưu ý khi diễn giải kết quả
 
-- Base feedback đã làm sạch chỉ báo cáo số lượng, không cung cấp failing assertion hoặc
-  runtime diagnostic cụ thể. Vì vậy, các lần gọi expert xác định và lặp lại có thể trả
-  về code không đổi.
+- Base feedback không cung cấp failing assertion hoặc giá trị test. V5 chủ yếu báo cáo
+  số lượng; v6 thêm failure class/signature và diagnostic tổng quát đã làm sạch. Vì
+  evaluator hiện không xuất traceback chi tiết, expert vẫn có thể lặp lại code cũ.
 - Pilot 30 task phù hợp để debug protocol nhưng chưa đủ cho ranking claim mạnh. Cần báo
   cáo confidence interval và dùng manifest lớn hơn hoặc nhiều seed khi phù hợp.
 - Decision checkpoint có thể nhạy với wording và thứ tự option. Cần giữ capability card

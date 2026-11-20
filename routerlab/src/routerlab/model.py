@@ -15,6 +15,13 @@ class ModelClient(ABC):
     def generate(self, messages: list[dict[str, str]]) -> ModelResponse:
         raise NotImplementedError
 
+    def count_tokens(self, messages: list[dict[str, str]]) -> tuple[int, str]:
+        # Safe fallback for remote clients whose exact tokenizer is unavailable.
+        # The method is surfaced in request audit logs and must not be represented
+        # as an exact provider token count.
+        text = "\n".join(item.get("content", "") for item in messages)
+        return max(1, (len(text.encode("utf-8")) + 3) // 4), "utf8_bytes_estimate_v1"
+
 
 class ReplayModelClient(ModelClient):
     """Deterministic client used by unit and integration tests."""
@@ -49,6 +56,32 @@ class OpenAICompatibleClient(ModelClient):
             raise ValueError(f"Missing API base URL in {source}")
         self.config = config
         self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self._local_tokenizer = None
+        self._tokenizer_checked = False
+
+    def count_tokens(self, messages: list[dict[str, str]]) -> tuple[int, str]:
+        if not self._tokenizer_checked:
+            self._tokenizer_checked = True
+            try:
+                from transformers import AutoTokenizer
+
+                self._local_tokenizer = AutoTokenizer.from_pretrained(
+                    self.config.checkpoint,
+                    local_files_only=True,
+                )
+            except Exception:
+                self._local_tokenizer = None
+        if self._local_tokenizer is None:
+            return super().count_tokens(messages)
+        text = self._local_tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        return (
+            len(self._local_tokenizer.encode(text, add_special_tokens=False)),
+            "checkpoint_tokenizer_exact_v1",
+        )
 
     def generate(self, messages: list[dict[str, str]]) -> ModelResponse:
         started = time.perf_counter()
@@ -104,6 +137,17 @@ class TransformersClient(ModelClient):
             config.checkpoint,
             torch_dtype=dtype,
             device_map=device_map,
+        )
+
+    def count_tokens(self, messages: list[dict[str, str]]) -> tuple[int, str]:
+        text = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        return (
+            len(self.tokenizer.encode(text, add_special_tokens=False)),
+            "checkpoint_tokenizer_exact_v1",
         )
 
     def generate(self, messages: list[dict[str, str]]) -> ModelResponse:

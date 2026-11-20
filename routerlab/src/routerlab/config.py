@@ -68,6 +68,15 @@ class WorkflowConfig:
 
 
 @dataclass(frozen=True)
+class ProtocolConfig:
+    version: str = "v5"
+    feedback_policy: str = "counts_only_v1"
+    framing_reserve_tokens: int = 256
+    router_code_preview_chars: int = 4000
+    recent_event_limit: int = 8
+
+
+@dataclass(frozen=True)
 class RunConfig:
     run_name: str
     output_dir: str
@@ -77,6 +86,7 @@ class RunConfig:
     workflow: WorkflowConfig
     router_model: ModelConfig | DecisionModelConfig | None = None
     prompt_version: str = "v1"
+    protocol: ProtocolConfig = field(default_factory=ProtocolConfig)
 
 
 def _construct(cls, payload: dict[str, Any] | None):
@@ -107,6 +117,23 @@ def load_config(path: str | Path) -> RunConfig:
         )
     if workflow.router in {"model", "laya", "decision_model"} and router_model is None:
         raise ValueError(f"{workflow.router} router requires router_model configuration")
+    protocol = _construct(ProtocolConfig, data.get("protocol"))
+    if protocol.version not in {"v5", "v6"}:
+        raise ValueError("protocol.version must be v5 or v6")
+    if protocol.feedback_policy not in {
+        "counts_only_v1",
+        "sanitized_diagnostic_v2",
+    }:
+        raise ValueError(
+            "protocol.feedback_policy must be counts_only_v1 or "
+            "sanitized_diagnostic_v2"
+        )
+    if protocol.framing_reserve_tokens < 0:
+        raise ValueError("protocol.framing_reserve_tokens must be non-negative")
+    if protocol.router_code_preview_chars < 256:
+        raise ValueError("protocol.router_code_preview_chars must be at least 256")
+    if protocol.recent_event_limit < 1:
+        raise ValueError("protocol.recent_event_limit must be positive")
     return RunConfig(
         run_name=str(data["run_name"]),
         output_dir=str(data.get("output_dir", "runs")),
@@ -116,4 +143,5 @@ def load_config(path: str | Path) -> RunConfig:
         budget=_construct(BudgetConfig, data.get("budget")),
         workflow=workflow,
         prompt_version=str(data.get("prompt_version", "v1")),
+        protocol=protocol,
     )

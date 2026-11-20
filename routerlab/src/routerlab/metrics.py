@@ -40,6 +40,19 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
         bool(step.metadata.get("budget_violation", False)) for step in router_steps
     )
     no_op_actions = sum(bool(step.metadata.get("no_op", False)) for step in executor_steps)
+    action_rejections = sum(
+        bool(step.metadata.get("action_rejected", False)) for step in executor_steps
+    )
+    duplicate_candidates = sum(
+        bool(step.metadata.get("duplicate_candidate", False)) for step in executor_steps
+    )
+    semantic_progress = sum(
+        bool(step.metadata.get("semantic_delta", False)) for step in executor_steps
+    )
+    context_budget_failures = sum(
+        step.metadata.get("status") == "context_budget_exceeded"
+        for step in executor_steps
+    )
     no_submissions = sum(not item.has_submission for item in episodes)
     premature_stops = sum(
         item.termination_reason == "router_stop_no_submission" for item in episodes
@@ -68,6 +81,28 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
         )
     solved = sum(final_plus)
     total_cost = sum(item.total_cost_usd for item in episodes)
+    base_recovery_opportunities = sum(
+        bool(item.initial_evaluation and not item.initial_evaluation.base_passed)
+        for item in episodes
+    )
+    base_recoveries = sum(
+        bool(
+            item.initial_evaluation
+            and not item.initial_evaluation.base_passed
+            and item.final_evaluation
+            and item.final_evaluation.base_passed
+        )
+        for item in episodes
+    )
+    base_regressions = sum(
+        bool(
+            item.initial_evaluation
+            and item.initial_evaluation.base_passed
+            and item.final_evaluation
+            and not item.final_evaluation.base_passed
+        )
+        for item in episodes
+    )
     return {
         "task_count": len(episodes),
         "quality": {
@@ -81,6 +116,14 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
             "absolute_plus_improvement": None,
             "normalized_plus_improvement": None,
             "repair_recovery_rate": None,
+            "base_recovery_opportunities": base_recovery_opportunities,
+            "base_recoveries": base_recoveries,
+            "base_recovery_rate": (
+                base_recoveries / base_recovery_opportunities
+                if base_recovery_opportunities
+                else None
+            ),
+            "base_regressions": base_regressions,
         },
         "efficiency": {
             "mean_executor_steps": mean([x.total_steps for x in episodes])
@@ -120,6 +163,19 @@ def aggregate_metrics(results: Iterable[EpisodeResult]) -> dict:
             "no_op_action_rate": no_op_actions / len(executor_steps)
             if executor_steps
             else 0.0,
+            "action_rejections": action_rejections,
+            "action_rejection_rate": action_rejections / len(executor_steps)
+            if executor_steps
+            else 0.0,
+            "duplicate_candidates": duplicate_candidates,
+            "duplicate_candidate_rate": duplicate_candidates / len(executor_steps)
+            if executor_steps
+            else 0.0,
+            "semantic_progress_actions": semantic_progress,
+            "semantic_progress_rate": semantic_progress / len(executor_steps)
+            if executor_steps
+            else 0.0,
+            "context_budget_failures": context_budget_failures,
             "no_submission_rate": no_submissions / len(episodes) if episodes else 0.0,
             "premature_stop_rate": premature_stops / len(episodes)
             if episodes

@@ -5,6 +5,13 @@ state payload, five actions, action descriptions, invalid-output policy and logg
 are shared. An adapter may only translate the canonical contract to a provider's
 wire format and normalize its typed answer.
 
+Under protocol v6, every decision model receives the same canonical nested projection:
+task contract, current candidate identity/preview, fresh artifacts, role progress,
+recent events, budget and the full action space. Compatibility fields remain present
+so deterministic and legacy policies can run under the same harness. Provider-side
+truncation is recorded when the adapter reports it; it must not be silently interpreted
+as equivalent context consumption across models with different context limits.
+
 The action descriptions are canonical router-facing capability cards. Each card states
 the action's inputs, state effect, availability, and step cost. Reviewer and Analyst
 cards explicitly allow use before code and after either Base pass or Base fail; this

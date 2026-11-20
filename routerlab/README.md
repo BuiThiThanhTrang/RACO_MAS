@@ -47,8 +47,9 @@ routers.
 | E3-DM | Typed decision router | JEV, Luna, Laya or another registered model answers the same typed choice question |
 
 E3 has no mandatory Coder bootstrap and no action mask. Every routing state exposes the
-same five actions. `repair_agent` before code is a charged no-op, and `STOP` before code
-ends with no submission. Every non-STOP executor action consumes one of seven shared
+same five actions. `repair_agent` before code is a charged no-op in v5 and an explicit
+charged `action_rejected` outcome in v6; `STOP` before code ends with no submission.
+Every non-STOP executor action consumes one of seven shared
 steps; `STOP` consumes no step. At zero remaining steps the full action space is still
 shown: selecting an executor is logged as a budget violation and is not executed. The
 controller also enforces Base-Test and wall-time safety limits. Token usage is measured
@@ -107,6 +108,9 @@ Efficiency and routing metrics:
 - router decisions, invalid-decision and budget-violation rates, no-op and
   no-submission rates, steps to first code, and termination reasons.
 
+V6 additionally reports Base-recovery opportunities/recoveries/regressions, semantic
+progress, duplicate candidate, action rejection and context-budget failure rates.
+
 ## Output of each run
 
 ```text
@@ -122,6 +126,11 @@ runs/<run_name>/<run_id>/
 
 `public_trace.jsonl` contains no Plus-Test fields. Keep `private_eval.jsonl` unavailable
 to routers and any online training loop.
+
+Protocol v6 additionally writes an auditable per-task directory under
+`episodes/<task_id>/` with state snapshots, router decisions, trajectory events,
+request payloads, role progress and versioned artifacts. V6 is currently end-to-end
+only; controlled recovery and frozen candidate banks are not implemented.
 
 ## Installation on Windows PowerShell
 
@@ -164,8 +173,18 @@ routerlab run --config configs\mbpp_e3_luna_openrouter_modal.yaml --manifest man
 routerlab run --config configs\mbpp_e3_laya_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-laya-typed-v5-pinned-s42
 ```
 
-JEV and Luna use `OPENROUTER_API_KEY`; all three configs use `MODAL_PROXY_TOKEN`.
+Run the non-routing baselines with the same Modal Qwen endpoint, manifest, decoding,
+seven-step executor budget, evaluator and current-code submission rule:
+
+```powershell
+routerlab run --config configs\mbpp_e1_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-single-v5-s42
+routerlab run --config configs\mbpp_e2_modal.yaml --manifest manifests\mbpp_plus_full.json --run-id full-fixed-v5-s42
+```
+
+JEV and Luna additionally use `OPENROUTER_API_KEY`; all five full-run configs use
+`MODAL_PROXY_TOKEN` for the shared expert endpoint.
 Laya is pinned to revision `989e28febe5886389496fe13a8036c62b2a20ae0`.
+
 Before the Laya run, select the cache that contains that revision:
 
 ```powershell
@@ -192,6 +211,22 @@ For machines that cannot hold both models, the low-cost Modal deployment keeps
 the selected router local or remote and serves the same Qwen checkpoint on one
 scale-to-zero T4. See
 [`docs/MODAL_QWEN.md`](docs/MODAL_QWEN.md).
+
+## Protocol v6 reruns
+
+Protocol v6 adds artifact freshness, role progress, bounded executor handoffs,
+structured failure/no-progress logging and Base-recovery metrics while preserving the
+same executor-only router action space. The current rerun divides the locked full
+manifest into a 124-task post-hoc JEV/Luna common-failure cohort and its disjoint
+254-task complement. This partition is for diagnostic analysis, not a new benchmark
+split. Commands, interpretation rules and resume instructions are in
+[`docs/PROTOCOL_V6_RUNS_VI.md`](docs/PROTOCOL_V6_RUNS_VI.md).
+
+Resume an interrupted run with the exact original config, manifest and run id:
+
+```powershell
+python -m routerlab.cli run --config <config> --manifest <manifest> --run-id <run-id> --resume
+```
 
 Typed routers now share one `decision_model` interface and registry. Laya, JEV,
 OpenAI Decisions and DREX use the same state and action contract; only their wire

@@ -29,6 +29,46 @@ def parse_findings(text: str) -> tuple[str, ...]:
     return tuple(line for line in lines if line)
 
 
+def parse_structured_findings(
+    text: str,
+) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...]]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
+    try:
+        payload: Any = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return parse_findings(text), ()
+    values = payload.get("findings", payload) if isinstance(payload, dict) else payload
+    if not isinstance(values, list):
+        return parse_findings(text), ()
+    claims: list[str] = []
+    records: list[dict[str, Any]] = []
+    for index, item in enumerate(values, start=1):
+        if isinstance(item, dict):
+            claim = str(item.get("claim", "")).strip()
+            if not claim:
+                continue
+            span = item.get("code_span")
+            if span is not None and not isinstance(span, dict):
+                span = None
+            claims.append(claim)
+            records.append(
+                {
+                    "finding_id": str(item.get("finding_id") or f"finding-{index}"),
+                    "category": str(item.get("category") or "unknown"),
+                    "claim": claim,
+                    "code_span": span,
+                    "confidence": str(item.get("confidence") or "unknown"),
+                }
+            )
+        else:
+            claim = str(item).strip()
+            if claim:
+                claims.append(claim)
+    return tuple(claims), tuple(records)
+
+
 def parse_router_action(text: str, action_space: tuple[str, ...]) -> tuple[str, bool]:
     cleaned = text.strip()
     try:

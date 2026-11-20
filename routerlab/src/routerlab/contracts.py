@@ -187,6 +187,8 @@ class ExecutorResult:
     findings: tuple[str, ...] = ()
     no_op: bool = False
     no_op_reason: str = ""
+    finding_records: tuple[Mapping[str, Any], ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.executor_id not in set(EXECUTOR_IDS) | {"single_agent"}:
@@ -223,6 +225,7 @@ class EpisodeResult:
     total_base_executions: int
     total_cost_usd: float
     wall_time_ms: float
+    protocol_data: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def initial_success(self) -> bool | None:

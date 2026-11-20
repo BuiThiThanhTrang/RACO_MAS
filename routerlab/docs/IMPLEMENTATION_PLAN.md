@@ -1,5 +1,8 @@
 # Implementation plan: MBPP+ dynamic executor routing
 
+Status: protocol v5 and the end-to-end portion of protocol v6 are implemented.
+Controlled recovery and frozen candidate banks are intentionally deferred.
+
 ## 1. Scope and research contract
 
 Build an independent experiment package for comparing fixed and dynamic multi-agent
@@ -77,6 +80,20 @@ and run exactly once on the final submitted artifact.
    - Run smoke tasks for environment validation, then the shared 30-task pilot.
    - Inspect failures before scaling JEV, Luna and pinned Laya to the locked 378-task
      `manifests/mbpp_plus_full.json` manifest under protocol v5.
+
+8. **Protocol v6 end-to-end extension — implemented**
+   - Add versioned artifacts, candidate provenance/freshness, role progress and recent
+     events without changing the five-action router contract.
+   - Use structured review findings, sanitized Base-execution artifacts and bounded,
+     audited executor inputs.
+   - Treat invalid output, duplicate code, repair-before-candidate and context overflow
+     as explicit outcomes instead of hidden controller behavior.
+   - Add per-episode v6 logs, Base recovery/regression, semantic-progress, duplicate
+     and action-rejection metrics.
+   - Support safe `--resume` by validating the exact config/manifest and rebuilding
+     aggregate metrics from completed episodes before appending remaining tasks.
+   - Run only end-to-end routing. Do not create or evaluate a controlled-recovery bank
+     in this phase.
 
 ## 3. Acceptance criteria
 
